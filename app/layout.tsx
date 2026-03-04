@@ -16,7 +16,7 @@ const epilogue = Epilogue({
 })
 
 export const metadata: Metadata = {
-  title: 'The Archive — Art Catalogue',
+  title: 'ArtisTrust — Art Catalogue',
   description: 'A private catalogue for paintings and photographs',
 }
 
