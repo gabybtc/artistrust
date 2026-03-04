@@ -12,6 +12,7 @@ export default function AuthModal({ onAuth }: Props) {
   const [mode, setMode] = useState<Mode>('signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [magicSent, setMagicSent] = useState(false)
@@ -23,7 +24,7 @@ export default function AuthModal({ onAuth }: Props) {
     border: '1px solid var(--border)',
     borderRadius: 2,
     color: 'var(--text)',
-    fontSize: 14,
+    fontSize: 15,
     fontFamily: 'var(--font-body)',
     fontWeight: 300,
     outline: 'none',
@@ -33,7 +34,7 @@ export default function AuthModal({ onAuth }: Props) {
 
   const labelStyle: React.CSSProperties = {
     display: 'block',
-    fontSize: 10,
+    fontSize: 11,
     letterSpacing: '0.14em',
     textTransform: 'uppercase',
     color: 'var(--text-dim)',
@@ -57,7 +58,10 @@ export default function AuthModal({ onAuth }: Props) {
       } else if (mode === 'signup') {
         const { error } = await supabase.auth.signUp({
           email, password,
-          options: { emailRedirectTo: window.location.origin },
+          options: {
+            emailRedirectTo: window.location.origin,
+            data: { full_name: name },
+          },
         })
         if (error) throw error
         // After signup, try to sign in immediately
@@ -105,7 +109,7 @@ export default function AuthModal({ onAuth }: Props) {
             ArtisTrust
           </h1>
           <span style={{
-            fontSize: 9, letterSpacing: '0.22em', textTransform: 'uppercase',
+            fontSize: 10, letterSpacing: '0.22em', textTransform: 'uppercase',
             color: 'var(--accent-dim)', fontFamily: 'var(--font-body)',
           }}>
             Studio
@@ -135,7 +139,7 @@ export default function AuthModal({ onAuth }: Props) {
                 padding: '7px 4px',
                 color: mode === m ? 'var(--text)' : 'var(--text-dim)',
                 fontFamily: 'var(--font-body)',
-                fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
+                fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
                 cursor: 'pointer',
                 transition: 'all 0.15s',
               }}
@@ -166,7 +170,7 @@ export default function AuthModal({ onAuth }: Props) {
               Check your inbox
             </p>
             <p style={{
-              fontSize: 12, color: 'var(--text-dim)',
+              fontSize: 13, color: 'var(--text-dim)',
               fontFamily: 'var(--font-body)', lineHeight: 1.6,
             }}>
               A magic link was sent to <strong style={{ color: 'var(--text)' }}>{email}</strong>.<br />
@@ -175,6 +179,22 @@ export default function AuthModal({ onAuth }: Props) {
           </div>
         ) : (
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            {mode === 'signup' && (
+              <div>
+                <label style={labelStyle}>Full Name</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="Your full name"
+                  required
+                  autoFocus
+                  style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = 'var(--accent-dim)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+                />
+              </div>
+            )}
             <div>
               <label style={labelStyle}>Email</label>
               <input
@@ -183,7 +203,7 @@ export default function AuthModal({ onAuth }: Props) {
                 onChange={e => setEmail(e.target.value)}
                 placeholder="your@email.com"
                 required
-                autoFocus
+                autoFocus={mode !== 'signup'}
                 style={inputStyle}
                 onFocus={e => (e.target.style.borderColor = 'var(--accent-dim)')}
                 onBlur={e => (e.target.style.borderColor = 'var(--border)')}
@@ -208,7 +228,7 @@ export default function AuthModal({ onAuth }: Props) {
 
             {error && (
               <p style={{
-                fontSize: 12, color: '#e05555',
+                fontSize: 13, color: '#e05555',
                 fontFamily: 'var(--font-body)',
                 background: 'rgba(224,85,85,0.08)',
                 border: '1px solid rgba(224,85,85,0.2)',
@@ -229,7 +249,7 @@ export default function AuthModal({ onAuth }: Props) {
                 padding: '12px',
                 color: loading ? 'var(--accent)' : '#0a0a0a',
                 fontFamily: 'var(--font-body)',
-                fontSize: 11, fontWeight: 600,
+                fontSize: 12, fontWeight: 600,
                 letterSpacing: '0.14em', textTransform: 'uppercase',
                 cursor: loading ? 'default' : 'pointer',
                 transition: 'all 0.18s',
@@ -249,7 +269,7 @@ export default function AuthModal({ onAuth }: Props) {
 
         <p style={{
           textAlign: 'center', marginTop: 24,
-          fontSize: 11, color: 'var(--muted)',
+          fontSize: 12, color: 'var(--muted)',
           fontFamily: 'var(--font-body)', lineHeight: 1.5,
         }}>
           Your catalogue is private and encrypted.

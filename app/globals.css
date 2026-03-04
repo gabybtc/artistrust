@@ -28,7 +28,7 @@ html, body {
 /* Tags */
 .tag {
   font-family: var(--font-body), sans-serif;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 3px 8px;
@@ -82,7 +82,7 @@ html, body {
   border-radius: 2px;
   padding: 10px 18px;
   font-family: var(--font-body), sans-serif;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.08em;
   color: var(--accent);
   opacity: 0;

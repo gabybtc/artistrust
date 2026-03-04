@@ -63,7 +63,7 @@ export default function VoiceRecorder({ existingAudio, onSave }: VoiceRecorderPr
     }}>
       <p style={{
         fontFamily: 'var(--font-display)',
-        fontSize: 13,
+        fontSize: 14,
         letterSpacing: '0.12em',
         textTransform: 'uppercase',
         color: 'var(--text-dim)',
@@ -74,7 +74,7 @@ export default function VoiceRecorder({ existingAudio, onSave }: VoiceRecorderPr
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
         {/* Record / Stop button */}
-        {state === 'idle' && (
+        {(state === 'idle' || state === 'recorded') && (
           <button
             onClick={startRecording}
             style={{
@@ -84,7 +84,7 @@ export default function VoiceRecorder({ existingAudio, onSave }: VoiceRecorderPr
               borderRadius: 2, padding: '10px 18px',
               color: 'var(--accent)', cursor: 'pointer',
               fontFamily: 'var(--font-body)',
-              fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
+              fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase',
               transition: 'background 0.2s',
             }}
             onMouseEnter={e => (e.currentTarget.style.background = 'rgba(201,169,110,0.08)')}
@@ -108,7 +108,7 @@ export default function VoiceRecorder({ existingAudio, onSave }: VoiceRecorderPr
               borderRadius: 2, padding: '10px 18px',
               color: '#e05555', cursor: 'pointer',
               fontFamily: 'var(--font-body)',
-              fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
+              fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase',
             }}
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="#e05555">
@@ -134,7 +134,7 @@ export default function VoiceRecorder({ existingAudio, onSave }: VoiceRecorderPr
       </div>
 
       {state === 'recording' && (
-        <p style={{ marginTop: 12, fontSize: 11, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>
+        <p style={{ marginTop: 12, fontSize: 12, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>
           Speak freely — describe the work, what inspired it, when and where it was made…
         </p>
       )}
@@ -144,7 +144,7 @@ export default function VoiceRecorder({ existingAudio, onSave }: VoiceRecorderPr
           <svg width="10" height="10" viewBox="0 0 10 10" fill="var(--accent)" style={{ opacity: 0.7 }}>
             <circle cx="5" cy="5" r="5"/>
           </svg>
-          <p style={{ fontSize: 11, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>
+          <p style={{ fontSize: 12, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>
             Story recorded and saved
           </p>
         </div>

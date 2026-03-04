@@ -71,7 +71,7 @@ export default function ArtworkCard({ artwork, onClick }: ArtworkCardProps) {
               ))}
             </div>
             <span style={{
-              fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase',
+              fontSize: 11, letterSpacing: '0.15em', textTransform: 'uppercase',
               color: 'var(--accent)', fontFamily: 'var(--font-body)',
             }}>
               {artwork.status === 'uploading' ? 'Uploading' : 'Analysing'}
@@ -109,7 +109,7 @@ export default function ArtworkCard({ artwork, onClick }: ArtworkCardProps) {
               <circle cx="3.5" cy="3.5" r="3.5"/>
             </svg>
             <span style={{
-              fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase',
+              fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
               color: 'var(--accent)', fontFamily: 'var(--font-body)',
             }}>
               Story
@@ -134,7 +134,7 @@ export default function ArtworkCard({ artwork, onClick }: ArtworkCardProps) {
       }}>
         <div style={{
           fontFamily: 'var(--font-display)',
-          fontSize: 17, fontStyle: 'italic', fontWeight: 400,
+          fontSize: 18, fontStyle: 'italic', fontWeight: 400,
           color: isUntitled ? 'var(--muted)' : 'var(--text)',
           marginBottom: 8,
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
@@ -169,7 +169,7 @@ export default function ArtworkCard({ artwork, onClick }: ArtworkCardProps) {
         {(artwork.aiAnalysis?.subject || artwork.aiAnalysis?.style) && (
           <div style={{
             fontFamily: 'var(--font-body)',
-            fontSize: 11, color: 'var(--text-dim)', letterSpacing: '0.02em',
+            fontSize: 12, color: 'var(--text-dim)', letterSpacing: '0.02em',
           }}>
             {[artwork.aiAnalysis.subject, artwork.aiAnalysis.style].filter(Boolean).join(' · ')}
           </div>

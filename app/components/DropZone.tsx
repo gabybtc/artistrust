@@ -80,8 +80,8 @@ export default function DropZone({ onFiles, label = 'Drag paintings here' }: Dro
         onChange={e => handleFiles(e.target.files)}
       />
 
-      {/* Icon + label inline */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+      {/* Icon + label */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
         <svg
           width="26" height="26" viewBox="0 0 40 40" fill="none"
           style={{ opacity: dragging ? 0.9 : 0.45, flexShrink: 0, transition: 'opacity 0.2s' }}
@@ -90,10 +90,10 @@ export default function DropZone({ onFiles, label = 'Drag paintings here' }: Dro
           <circle cx="14" cy="16" r="3.5" stroke={neon} strokeWidth="1.4"/>
           <path d="M4 26l10-8 7 5 5-4 14 9" stroke={neon} strokeWidth="1.4" strokeLinejoin="round"/>
         </svg>
-        <div style={{ textAlign: 'left' }}>
+        <div style={{ textAlign: 'center' }}>
           <h2 style={{
             fontFamily: 'var(--font-display)',
-            fontSize: 16, fontStyle: 'italic', fontWeight: 400,
+            fontSize: 17, fontStyle: 'italic', fontWeight: 400,
             color: dragging ? neon : 'var(--text)',
             transition: 'color 0.2s', margin: 0, lineHeight: 1.3,
           }}>
@@ -101,10 +101,24 @@ export default function DropZone({ onFiles, label = 'Drag paintings here' }: Dro
           </h2>
           <p style={{
             fontFamily: 'var(--font-body)',
-            fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
+            fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
             color: 'var(--muted)', margin: '3px 0 0',
           }}>
-            or click to browse · JPG · PNG · WEBP
+            or click to browse
+          </p>
+          <p style={{
+            fontFamily: 'var(--font-body)',
+            fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+            color: 'var(--muted)', margin: '2px 0 0',
+          }}>
+            JPG · PNG · WEBP
+          </p>
+          <p style={{
+            fontFamily: 'var(--font-body)',
+            fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+            color: 'var(--muted)', margin: '2px 0 0',
+          }}>
+            Max 10 at once
           </p>
         </div>
       </div>

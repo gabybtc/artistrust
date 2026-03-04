@@ -26,7 +26,7 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 2,
   padding: '9px 12px',
   color: 'var(--text)',
-  fontSize: 13,
+  fontSize: 14,
   fontFamily: 'var(--font-body)',
   fontWeight: 300,
   outline: 'none',
@@ -37,7 +37,7 @@ const inputStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = {
   display: 'block',
   fontFamily: 'var(--font-body)',
-  fontSize: 10,
+  fontSize: 11,
   letterSpacing: '0.14em',
   textTransform: 'uppercase',
   color: 'var(--text-dim)',
@@ -120,7 +120,7 @@ export default function LegalModal({ userId, onClose, onSaved }: Props) {
               <path d="M3 4h4M3 6.5h4M3 9h2.5" stroke="var(--accent)" strokeWidth="0.9" strokeLinecap="round"/>
             </svg>
             <span style={{
-              fontFamily: 'var(--font-body)', fontSize: 10,
+              fontFamily: 'var(--font-body)', fontSize: 11,
               letterSpacing: '0.14em', textTransform: 'uppercase',
               color: 'var(--text-dim)',
             }}>
@@ -144,7 +144,7 @@ export default function LegalModal({ userId, onClose, onSaved }: Props) {
         </div>
 
         {loading ? (
-          <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)', fontFamily: 'var(--font-body)', fontSize: 13 }}>
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)', fontFamily: 'var(--font-body)', fontSize: 14 }}>
             Loading…
           </div>
         ) : (

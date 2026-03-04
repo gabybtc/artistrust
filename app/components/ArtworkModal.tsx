@@ -18,7 +18,7 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 2,
   padding: '8px 12px',
   color: 'var(--text)',
-  fontSize: 13,
+  fontSize: 14,
   fontFamily: 'var(--font-body)',
   fontWeight: 300,
   outline: 'none',
@@ -28,7 +28,7 @@ const inputStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = {
   display: 'block',
   fontFamily: 'var(--font-body)',
-  fontSize: 10,
+  fontSize: 11,
   letterSpacing: '0.14em',
   textTransform: 'uppercase',
   color: 'var(--text-dim)',
@@ -113,7 +113,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {/* Breadcrumb */}
             <span style={{
-              fontFamily: 'var(--font-body)', fontSize: 10,
+              fontFamily: 'var(--font-body)', fontSize: 11,
               letterSpacing: '0.14em', textTransform: 'uppercase',
               color: 'var(--text-dim)',
             }}>
@@ -199,7 +199,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
               }}>
                 <p style={{
                   fontFamily: 'var(--font-display)',
-                  fontSize: 14, fontStyle: 'italic',
+                  fontSize: 15, fontStyle: 'italic',
                   color: 'rgba(232,232,232,0.8)', lineHeight: 1.65,
                 }}>
                   &ldquo;{artwork.aiAnalysis.description}&rdquo;
@@ -227,7 +227,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                   ...inputStyle,
                   fontFamily: 'var(--font-display)',
                   fontStyle: 'italic',
-                  fontSize: 19,
+                  fontSize: 20,
                   fontWeight: 400,
                 }}
                 onFocus={e => (e.target.style.borderColor = 'var(--accent-dim)')}
@@ -260,7 +260,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                       borderRadius: 2,
                       color: form.mediaType === type ? 'var(--accent)' : 'var(--text-dim)',
                       fontFamily: 'var(--font-body)',
-                      fontSize: 10, letterSpacing: '0.12em', textTransform: 'capitalize',
+                      fontSize: 11, letterSpacing: '0.12em', textTransform: 'capitalize',
                       cursor: 'pointer',
                       transition: 'all 0.18s',
                     }}
@@ -286,7 +286,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                 onBlur={e => (e.target.style.borderColor = 'var(--border)')}
               />
               <p style={{
-                marginTop: 5, fontSize: 10, color: 'var(--muted)',
+                marginTop: 5, fontSize: 11, color: 'var(--muted)',
                 fontFamily: 'var(--font-body)', letterSpacing: '0.04em',
               }}>
                 Used for provenance records, insurance &amp; estate documentation
@@ -331,7 +331,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
             {/* Copyright */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{
-                fontFamily: 'var(--font-body)', fontSize: 9,
+                fontFamily: 'var(--font-body)', fontSize: 10,
                 letterSpacing: '0.18em', textTransform: 'uppercase',
                 color: 'var(--accent-dim)',
               }}>
@@ -352,7 +352,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                   <option value="registered">Registered — Copyright Office</option>
                 </select>
                 <p style={{
-                  marginTop: 5, fontSize: 10, color: 'var(--muted)',
+                  marginTop: 5, fontSize: 11, color: 'var(--muted)',
                   fontFamily: 'var(--font-body)', letterSpacing: '0.03em', lineHeight: 1.5,
                 }}>
                   {form.copyrightStatus === 'automatic'
@@ -403,7 +403,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                     onBlur={e => (e.target.style.borderColor = 'var(--border)')}
                   />
                   <p style={{
-                    marginTop: 5, fontSize: 10, color: 'var(--muted)',
+                    marginTop: 5, fontSize: 11, color: 'var(--muted)',
                     fontFamily: 'var(--font-body)', letterSpacing: '0.03em',
                   }}>
                     Register at <span style={{ color: 'var(--accent-dim)' }}>copyright.gov</span> (US) or your country&apos;s equivalent.
@@ -419,7 +419,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
               }}>
                 <span style={{
-                  fontFamily: 'var(--font-body)', fontSize: 11,
+                  fontFamily: 'var(--font-body)', fontSize: 12,
                   color: 'var(--text-dim)', letterSpacing: '0.03em',
                 }}>
                   © {form.copyrightYear || new Date().getFullYear()} {form.copyrightHolder || '—'}
@@ -427,7 +427,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                     ? ` · Reg. ${form.copyrightRegNumber}` : ''}
                 </span>
                 <span style={{
-                  fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase',
+                  fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
                   color: form.copyrightStatus === 'registered' ? 'var(--accent)' : 'var(--text-dim)',
                   fontFamily: 'var(--font-body)',
                   background: form.copyrightStatus === 'registered' ? 'rgba(201,169,110,0.1)' : 'transparent',
@@ -447,7 +447,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                 borderRadius: 2, padding: '12px 14px',
               }}>
                 <div style={{
-                  fontFamily: 'var(--font-body)', fontSize: 9,
+                  fontFamily: 'var(--font-body)', fontSize: 10,
                   letterSpacing: '0.15em', textTransform: 'uppercase',
                   color: 'var(--accent-dim)', marginBottom: 9,
                 }}>
@@ -468,7 +468,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
               borderRadius: 2, padding: '14px 16px',
             }}>
               <div style={{
-                fontFamily: 'var(--font-display)', fontSize: 13,
+                fontFamily: 'var(--font-display)', fontSize: 14,
                 fontStyle: 'italic', color: 'var(--text-dim)', marginBottom: 12,
               }}>
                 Artist&rsquo;s Story
@@ -489,7 +489,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                 padding: 12, width: '100%',
                 color: '#0a0a0a',
                 fontFamily: 'var(--font-body)',
-                fontSize: 11, fontWeight: 500,
+                fontSize: 12, fontWeight: 500,
                 letterSpacing: '0.14em', textTransform: 'uppercase',
                 cursor: 'pointer',
                 transition: 'opacity 0.2s',
@@ -509,7 +509,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                   padding: '8px', width: '100%',
                   color: 'var(--text-dim)',
                   fontFamily: 'var(--font-body)',
-                  fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
+                fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
                   cursor: 'pointer',
                   transition: 'border-color 0.2s, color 0.2s',
                 }}

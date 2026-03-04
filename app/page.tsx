@@ -5,7 +5,7 @@ import type { User } from '@supabase/supabase-js'
 import { Artwork } from '@/lib/types'
 import { supabase } from '@/lib/supabase'
 import { fetchArtworks, upsertArtworks, deleteArtworkFromDB } from '@/lib/db'
-import { uploadImage } from '@/lib/uploadImage'
+import { uploadImage, compressBase64ForAnalysis, compressFileForStorage } from '@/lib/uploadImage'
 import ArtworkModal from './components/ArtworkModal'
 import ArtworkCard from './components/ArtworkCard'
 import DropZone from './components/DropZone'
@@ -60,50 +60,84 @@ export default function Home() {
 
   const analyzeArtwork = useCallback(async (id: string, imageData: string) => {
     setArtworks(prev => prev.map(a => a.id === id ? { ...a, status: 'analyzing' } : a))
-    try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageData }),
-      })
-      const data = await res.json()
-      if (data.analysis) {
-        setArtworks(prev => prev.map(a =>
-          a.id === id ? {
-            ...a,
-            status: 'ready',
-            aiAnalysis: data.analysis,
-            title: a.title || data.analysis.suggestedTitle || '',
-            material: a.material || data.analysis.medium || '',
-          } : a
-        ))
-      } else {
-        setArtworks(prev => prev.map(a => a.id === id ? { ...a, status: 'ready' } : a))
+
+    // Compress to max 1500px before sending — prevents large payload failures
+    const compressed = await compressBase64ForAnalysis(imageData)
+
+    const attempt = async (): Promise<boolean> => {
+      try {
+        // Hard 9s timeout — Vercel hobby functions cut off at 10s
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 9000)
+        const res = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageData: compressed }),
+          signal: controller.signal,
+        })
+        clearTimeout(timer)
+        if (!res.ok) return false
+        const data = await res.json()
+        if (data.analysis) {
+          setArtworks(prev => prev.map(a =>
+            a.id === id ? {
+              ...a,
+              status: 'ready',
+              aiAnalysis: data.analysis,
+              title: a.title || data.analysis.suggestedTitle || '',
+              material: a.material || data.analysis.medium || '',
+            } : a
+          ))
+          return true
+        }
+        return false
+      } catch {
+        return false
       }
-    } catch {
-      setArtworks(prev => prev.map(a => a.id === id ? { ...a, status: 'ready' } : a))
     }
+
+    // Try up to 3 times with a fixed 2s pause between retries
+    for (let tries = 0; tries < 3; tries++) {
+      if (tries > 0) await new Promise(r => setTimeout(r, 2000))
+      const ok = await attempt()
+      if (ok) return
+    }
+
+    // All retries exhausted — mark ready without analysis
+    setArtworks(prev => prev.map(a => a.id === id ? { ...a, status: 'ready' } : a))
   }, [])
 
   const handleFiles = useCallback(async (files: File[]) => {
     if (!user) return
+
+    const BATCH_LIMIT = 10
+    if (files.length > BATCH_LIMIT) {
+      showToast(`Max ${BATCH_LIMIT} images at once — first ${BATCH_LIMIT} added`)
+      files = files.slice(0, BATCH_LIMIT) as unknown as File[]
+    } else if (files.length > 1) {
+      showToast(`${files.length} works added — analysing…`)
+    }
+
     const newArtworks: Artwork[] = []
+
     for (const file of files) {
       const id = uuidv4()
-      // Read as base64 for immediate display + analysis
-      const imageData = await new Promise<string>((resolve) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result as string)
-        reader.readAsDataURL(file)
-      })
-      // Upload to Supabase Storage in background — swap base64 → URL once done
-      uploadImage(file, user.id, id)
-        .then(imageUrl => {
-          setArtworks(prev => prev.map(a => a.id === id ? { ...a, imageData: imageUrl } : a))
-        })
-        .catch(err => console.error('Upload error:', err))
 
-      newArtworks.push({
+      // Read as base64 — add card to state immediately so it appears right away
+      let imageData: string
+      try {
+        imageData = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload  = () => resolve(reader.result as string)
+          reader.onerror = () => reject(new Error('FileReader failed'))
+          reader.readAsDataURL(file)
+        })
+      } catch {
+        console.error('Could not read file:', file.name)
+        continue  // skip this file, keep processing the rest
+      }
+
+      const artwork: Artwork = {
         id, imageData, fileName: file.name,
         title: '', year: '', place: '',
         location: '',
@@ -114,17 +148,30 @@ export default function Home() {
         copyrightHolder: '',
         copyrightYear: new Date().getFullYear().toString(),
         copyrightRegNumber: '',
-      })
+      }
+
+      // Add this card to state immediately — don't wait for all files
+      setArtworks(prev => [artwork, ...prev])
+      newArtworks.push(artwork)
+
+      // Upload to Storage in background
+      compressFileForStorage(file)
+        .then(c => uploadImage(c, user.id, id))
+        .then(imageUrl => {
+          setArtworks(prev => prev.map(a => a.id === id ? { ...a, imageData: imageUrl } : a))
+        })
+        .catch(err => console.error('Upload error:', err))
     }
-    setArtworks(prev => [...newArtworks, ...prev])
-    for (let i = 0; i < newArtworks.length; i++) {
-      setTimeout(() => {
-        analyzeArtwork(newArtworks[i].id, newArtworks[i].imageData)
-      }, i * 800)
+
+    // Run analysis with concurrency of 2 — fast enough, won't flood the API
+    const queue = [...newArtworks]
+    const worker = async () => {
+      while (queue.length > 0) {
+        const artwork = queue.shift()!
+        await analyzeArtwork(artwork.id, artwork.imageData)
+      }
     }
-    if (newArtworks.length > 1) {
-      showToast(`${newArtworks.length} works added — analysing…`)
-    }
+    await Promise.all([worker(), worker()])
   }, [user, activeTab, analyzeArtwork, showToast])
 
   const handleUpdate = useCallback((id: string, updates: Partial<Artwork>) => {
@@ -190,13 +237,13 @@ export default function Home() {
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, cursor: 'default' }}>
             <h1 style={{
               fontFamily: 'var(--font-display)',
-              fontSize: 21, fontWeight: 400, fontStyle: 'italic',
+              fontSize: 22, fontWeight: 400, fontStyle: 'italic',
               letterSpacing: '0.01em', color: 'var(--text)',
             }}>
               ArtisTrust
             </h1>
             <span style={{
-              fontSize: 10, letterSpacing: '0.18em', textTransform: 'uppercase',
+              fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase',
               color: 'var(--accent-dim)', fontFamily: 'var(--font-body)',
             }}>
               Studio
@@ -215,12 +262,12 @@ export default function Home() {
                 <div key={s.label} style={{ textAlign: 'right' }}>
                   <div style={{
                     fontFamily: 'var(--font-display)',
-                    fontSize: 21, color: 'var(--accent)', fontWeight: 400,
+                    fontSize: 22, color: 'var(--accent)', fontWeight: 400,
                   }}>
                     {s.value}
                   </div>
                   <div style={{
-                    fontSize: 9, letterSpacing: '0.12em',
+                    fontSize: 10, letterSpacing: '0.12em',
                     textTransform: 'uppercase', color: 'var(--text-dim)', marginTop: 1,
                   }}>
                     {s.label}
@@ -242,7 +289,7 @@ export default function Home() {
                       borderRadius: 2, padding: '5px 14px',
                       color: 'var(--text-dim)',
                       fontFamily: 'var(--font-body)',
-                      fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
+                      fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
                       cursor: 'pointer', transition: 'all 0.18s',
                       display: 'flex', alignItems: 'center', gap: 7,
                     }}
@@ -269,7 +316,7 @@ export default function Home() {
                       borderRadius: 2, padding: '5px 14px',
                       color: 'var(--text-dim)',
                       fontFamily: 'var(--font-body)',
-                      fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
+                      fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
                       cursor: 'pointer', transition: 'all 0.18s',
                     }}
                     onMouseEnter={e => {
@@ -308,7 +355,7 @@ export default function Home() {
                 onClick={() => { setActiveTab(tab.key); setFilter('all'); setSearchTerm('') }}
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
-                  fontFamily: 'var(--font-body)', fontSize: 11,
+                  fontFamily: 'var(--font-body)', fontSize: 12,
                   fontWeight: 400, letterSpacing: '0.14em', textTransform: 'uppercase',
                   color: isActive ? 'var(--text)' : 'var(--text-dim)',
                   padding: '14px 24px 12px',
@@ -321,7 +368,7 @@ export default function Home() {
                 {tab.label}
                 {count > 0 && (
                   <span style={{
-                    fontSize: 9,
+                    fontSize: 10,
                     background: isActive ? 'rgba(201,169,110,0.15)' : 'rgba(255,255,255,0.06)',
                     borderRadius: 100,
                     padding: '2px 7px',
@@ -372,7 +419,7 @@ export default function Home() {
                       width: '100%', padding: '8px 12px 8px 32px',
                       background: 'var(--surface)',
                       border: '1px solid var(--border)', borderRadius: 2,
-                      color: 'var(--text)', fontSize: 13,
+                      color: 'var(--text)', fontSize: 14,
                       fontFamily: 'var(--font-body)', fontWeight: 300,
                       outline: 'none', transition: 'border-color 0.2s',
                     }}
@@ -394,7 +441,7 @@ export default function Home() {
                         padding: '5px 13px',
                         color: filter === f ? '#0a0a0a' : 'var(--text-dim)',
                         fontFamily: 'var(--font-body)',
-                        fontSize: 10, fontWeight: 500,
+                        fontSize: 11, fontWeight: 500,
                         letterSpacing: '0.1em', textTransform: 'uppercase',
                         cursor: 'pointer',
                         transition: 'all 0.18s',
@@ -413,7 +460,7 @@ export default function Home() {
               </div>
 
               <span style={{
-                fontSize: 11, color: 'var(--text-dim)', letterSpacing: '0.06em',
+                fontSize: 12, color: 'var(--text-dim)', letterSpacing: '0.06em',
               }}>
                 {filtered.length} {filtered.length === 1 ? 'work' : 'works'}
               </span>
@@ -439,14 +486,14 @@ export default function Home() {
             <div style={{ textAlign: 'center', padding: '60px 0 40px' }}>
               <p style={{
                 fontFamily: 'var(--font-display)',
-                fontSize: 19, fontStyle: 'italic', fontWeight: 400,
+                fontSize: 20, fontStyle: 'italic', fontWeight: 400,
                 color: 'var(--muted)', marginBottom: 8,
               }}>
                 {activeTab === 'photography' ? 'Your photography archive awaits' : 'Your catalogue awaits'}
               </p>
               <small style={{
                 fontFamily: 'var(--font-body)',
-                fontSize: 12, color: 'var(--muted)', letterSpacing: '0.06em',
+                fontSize: 13, color: 'var(--muted)', letterSpacing: '0.06em',
               }}>
                 {activeTab === 'photography'
                   ? 'Drag scanned film, slides, or photographs above to begin'
@@ -457,7 +504,7 @@ export default function Home() {
             <div style={{ textAlign: 'center', padding: '60px 0' }}>
               <p style={{
                 fontFamily: 'var(--font-display)',
-                fontSize: 16, fontStyle: 'italic', color: 'var(--muted)',
+                fontSize: 17, fontStyle: 'italic', color: 'var(--muted)',
               }}>
                 No works match your search
               </p>

@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   "style": "The artistic style (e.g. Impressionism, Realism, Abstract Expressionism, Contemporary Realism, etc.)",
   "medium": "The likely medium (e.g. Oil on canvas, Watercolor, Acrylic, Mixed media, etc.)",
   "subject": "Brief description of the subject matter (e.g. Landscape, Portrait, Still life, Abstract composition, etc.)",
-  "description": "A single evocative sentence describing the work as an art curator would — focus on mood, composition, and visual impact.",
+  "description": "A single clear, straightforward sentence describing the work — keep it simple and factual, focusing on what is depicted and the overall mood without being dramatic or poetic.",
   "colorPalette": ["#hex1", "#hex2", "#hex3", "#hex4", "#hex5"],
   "suggestedTitle": "A poetic, concise suggested title for this work (2-5 words)"
 }
