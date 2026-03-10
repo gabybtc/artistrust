@@ -41,3 +41,21 @@ export interface LegalSettings {
   attorneyContact: string
   notes: string
 }
+
+/** Artist profile — stored in user_settings.profile */
+export interface ProfileSettings {
+  fullName: string
+  studioName: string
+  website: string
+  bio: string
+}
+
+/** A shared-access grant — allows a named person to view the catalogue via a private link */
+export interface AccessGrant {
+  id: string
+  token: string
+  granteeName: string
+  granteeEmail: string
+  createdAt: string
+  lastAccessed: string | null
+}

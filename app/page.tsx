@@ -1,16 +1,17 @@
 "use client"
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { v4 as uuidv4 } from 'uuid'
 import type { User } from '@supabase/supabase-js'
 import { Artwork } from '@/lib/types'
 import { supabase } from '@/lib/supabase'
 import { fetchArtworks, upsertArtworks, deleteArtworkFromDB } from '@/lib/db'
-import { uploadImage, compressBase64ForAnalysis, compressFileForStorage } from '@/lib/uploadImage'
+import { useUploadQueue } from '@/lib/useUploadQueue'
 import ArtworkModal from './components/ArtworkModal'
 import ArtworkCard from './components/ArtworkCard'
 import DropZone from './components/DropZone'
 import AuthModal from './components/AuthModal'
 import LegalModal from './components/LegalModal'
+import ProfileModal from './components/ProfileModal'
+import QueueDrawer from './components/QueueDrawer'
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null)
@@ -22,6 +23,7 @@ export default function Home() {
   const [mounted, setMounted] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [legalOpen, setLegalOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -58,121 +60,27 @@ export default function Home() {
     toastTimer.current = setTimeout(() => setToast(null), 2400)
   }, [])
 
-  const analyzeArtwork = useCallback(async (id: string, imageData: string) => {
-    setArtworks(prev => prev.map(a => a.id === id ? { ...a, status: 'analyzing' } : a))
-
-    // Compress to max 1500px before sending — prevents large payload failures
-    const compressed = await compressBase64ForAnalysis(imageData)
-
-    const attempt = async (): Promise<boolean> => {
-      try {
-        // Hard 9s timeout — Vercel hobby functions cut off at 10s
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), 9000)
-        const res = await fetch('/api/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageData: compressed }),
-          signal: controller.signal,
-        })
-        clearTimeout(timer)
-        if (!res.ok) return false
-        const data = await res.json()
-        if (data.analysis) {
-          setArtworks(prev => prev.map(a =>
-            a.id === id ? {
-              ...a,
-              status: 'ready',
-              aiAnalysis: data.analysis,
-              title: a.title || data.analysis.suggestedTitle || '',
-              material: a.material || data.analysis.medium || '',
-            } : a
-          ))
-          return true
-        }
-        return false
-      } catch {
-        return false
-      }
-    }
-
-    // Try up to 3 times with a fixed 2s pause between retries
-    for (let tries = 0; tries < 3; tries++) {
-      if (tries > 0) await new Promise(r => setTimeout(r, 2000))
-      const ok = await attempt()
-      if (ok) return
-    }
-
-    // All retries exhausted — mark ready without analysis
-    setArtworks(prev => prev.map(a => a.id === id ? { ...a, status: 'ready' } : a))
+  // ── Upload queue — handles unlimited files, folders, background processing ──
+  const onArtworkAdded = useCallback((artwork: Artwork) => {
+    setArtworks(prev => [artwork, ...prev])
   }, [])
 
-  const handleFiles = useCallback(async (files: File[]) => {
+  const onArtworkUpdated = useCallback((id: string, updates: Partial<Artwork>) => {
+    setArtworks(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a))
+  }, [])
+
+  const uploadQueue = useUploadQueue({
+    userId: user?.id ?? null,
+    activeTab,
+    onArtworkAdded,
+    onArtworkUpdated,
+  })
+
+  const handleFiles = useCallback((files: File[]) => {
     if (!user) return
-
-    const BATCH_LIMIT = 10
-    if (files.length > BATCH_LIMIT) {
-      showToast(`Max ${BATCH_LIMIT} images at once — first ${BATCH_LIMIT} added`)
-      files = files.slice(0, BATCH_LIMIT) as unknown as File[]
-    } else if (files.length > 1) {
-      showToast(`${files.length} works added — analysing…`)
-    }
-
-    const newArtworks: Artwork[] = []
-
-    for (const file of files) {
-      const id = uuidv4()
-
-      // Read as base64 — add card to state immediately so it appears right away
-      let imageData: string
-      try {
-        imageData = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload  = () => resolve(reader.result as string)
-          reader.onerror = () => reject(new Error('FileReader failed'))
-          reader.readAsDataURL(file)
-        })
-      } catch {
-        console.error('Could not read file:', file.name)
-        continue  // skip this file, keep processing the rest
-      }
-
-      const artwork: Artwork = {
-        id, imageData, fileName: file.name,
-        title: '', year: '', place: '',
-        location: '',
-        width: '', height: '', unit: 'cm',
-        material: '', mediaType: activeTab, status: 'uploading',
-        uploadedAt: new Date().toISOString(),
-        copyrightStatus: 'automatic',
-        copyrightHolder: '',
-        copyrightYear: new Date().getFullYear().toString(),
-        copyrightRegNumber: '',
-      }
-
-      // Add this card to state immediately — don't wait for all files
-      setArtworks(prev => [artwork, ...prev])
-      newArtworks.push(artwork)
-
-      // Upload to Storage in background
-      compressFileForStorage(file)
-        .then(c => uploadImage(c, user.id, id))
-        .then(imageUrl => {
-          setArtworks(prev => prev.map(a => a.id === id ? { ...a, imageData: imageUrl } : a))
-        })
-        .catch(err => console.error('Upload error:', err))
-    }
-
-    // Run analysis with concurrency of 2 — fast enough, won't flood the API
-    const queue = [...newArtworks]
-    const worker = async () => {
-      while (queue.length > 0) {
-        const artwork = queue.shift()!
-        await analyzeArtwork(artwork.id, artwork.imageData)
-      }
-    }
-    await Promise.all([worker(), worker()])
-  }, [user, activeTab, analyzeArtwork, showToast])
+    uploadQueue.addFiles(files)
+    if (files.length > 1) showToast(`${files.length} works queued`)
+  }, [user, uploadQueue, showToast])
 
   const handleUpdate = useCallback((id: string, updates: Partial<Artwork>) => {
     setArtworks(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a))
@@ -276,11 +184,43 @@ export default function Home() {
               ))}
             </div>
 
-            {/* Legal + Sign out */}
+            {/* Profile + Legal + Sign out */}
             {user && (
               <>
                 <div style={{ width: 1, height: 28, background: 'var(--border)' }} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {/* Profile avatar button */}
+                  <button
+                    onClick={() => setProfileOpen(true)}
+                    title="Artist Profile"
+                    style={{
+                      width: 32, height: 32, borderRadius: '50%',
+                      background: 'rgba(201,169,110,0.1)',
+                      border: '1px solid var(--accent-dim)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font-display)',
+                      fontSize: 13, fontStyle: 'italic',
+                      color: 'var(--accent)',
+                      transition: 'all 0.18s',
+                      flexShrink: 0,
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.background = 'rgba(201,169,110,0.2)'
+                      e.currentTarget.style.borderColor = 'var(--accent)'
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.background = 'rgba(201,169,110,0.1)'
+                      e.currentTarget.style.borderColor = 'var(--accent-dim)'
+                    }}
+                  >
+                    {(() => {
+                      const meta = user.user_metadata?.full_name as string | undefined
+                      return meta
+                        ? meta.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
+                        : user.email?.[0]?.toUpperCase() ?? '?'
+                    })()}
+                  </button>
                   <button
                     onClick={() => setLegalOpen(true)}
                     style={{
@@ -538,6 +478,29 @@ export default function Home() {
           onSaved={() => showToast('Legal settings saved')}
         />
       )}
+
+      {/* Profile Modal */}
+      {profileOpen && user && (
+        <ProfileModal
+          userId={user.id}
+          userEmail={user.email ?? ''}
+          onClose={() => setProfileOpen(false)}
+          onSaved={() => showToast('Profile saved')}
+        />
+      )}
+
+      {/* Upload queue progress drawer */}
+      <QueueDrawer
+        items={uploadQueue.items}
+        stats={uploadQueue.stats}
+        isPaused={uploadQueue.isPaused}
+        isVisible={uploadQueue.isVisible}
+        onPause={uploadQueue.pause}
+        onResume={uploadQueue.resume}
+        onRetryErrors={uploadQueue.retryErrors}
+        onClearDone={uploadQueue.clearDone}
+        onClose={() => uploadQueue.setVisible(false)}
+      />
 
       {/* Auth gate — shown when not signed in */}
       {mounted && !user && (

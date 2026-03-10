@@ -271,7 +271,30 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
               </div>
             </div>
 
-            {field('Material', 'material', form.mediaType === 'photography' ? 'e.g. 35mm Film, Silver gelatin' : 'e.g. Oil on linen')}
+            <div>
+              <label style={labelStyle}>
+                Material
+                {!artwork.material && artwork.aiAnalysis?.medium && (
+                  <span style={{
+                    marginLeft: 6,
+                    fontSize: 10,
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    color: 'var(--accent-dim)',
+                    fontWeight: 400,
+                  }}>· suggested by Claude</span>
+                )}
+              </label>
+              <input
+                type="text"
+                value={form.material}
+                onChange={e => setForm(f => ({ ...f, material: e.target.value }))}
+                placeholder={form.mediaType === 'photography' ? 'e.g. 35mm Film, Silver gelatin' : 'e.g. Oil on linen'}
+                style={inputStyle}
+                onFocus={e => (e.target.style.borderColor = 'var(--accent-dim)')}
+                onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+              />
+            </div>
 
             {/* Location */}
             <div>
@@ -455,7 +478,6 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                 </div>
                 <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                   {artwork.aiAnalysis.style   && <span className="tag">{artwork.aiAnalysis.style}</span>}
-                  {artwork.aiAnalysis.medium  && <span className="tag tag-gold">{artwork.aiAnalysis.medium}</span>}
                   {artwork.aiAnalysis.subject && <span className="tag">{artwork.aiAnalysis.subject}</span>}
                 </div>
               </div>

@@ -40,6 +40,7 @@ create index if not exists artworks_user_id_idx on artworks(user_id);
 create table if not exists user_settings (
   user_id  uuid primary key references auth.users(id) on delete cascade,
   legal    jsonb default '{}'::jsonb,   -- LegalSettings object
+  profile  jsonb default '{}'::jsonb,   -- ProfileSettings object
   updated_at timestamptz default now()
 );
 
@@ -49,6 +50,27 @@ create policy "Users own their settings"
   on user_settings for all
   using  (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- 5. Catalogue access grants (token-based shared read-only access)
+create table if not exists catalogue_access (
+  id           uuid primary key default gen_random_uuid(),
+  owner_id     uuid references auth.users(id) on delete cascade not null,
+  token        text unique not null default encode(gen_random_bytes(32), 'hex'),
+  grantee_name text default '',
+  grantee_email text default '',
+  created_at   timestamptz default now(),
+  last_accessed timestamptz
+);
+
+alter table catalogue_access enable row level security;
+
+create policy "Owner manages their access grants"
+  on catalogue_access for all
+  using  (auth.uid() = owner_id)
+  with check (auth.uid() = owner_id);
+
+create index if not exists catalogue_access_owner_idx on catalogue_access(owner_id);
+create index if not exists catalogue_access_token_idx on catalogue_access(token);
 
 -- ============================================================
 -- Storage bucket setup (do this in the Storage UI or here)

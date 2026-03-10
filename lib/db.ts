@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Artwork, LegalSettings } from './types'
+import type { Artwork, LegalSettings, ProfileSettings, AccessGrant } from './types'
 
 // ── Row shape (matches the Supabase artworks table) ───────────────────────────
 interface ArtworkRow {
@@ -140,4 +140,77 @@ export async function saveLegalSettings(userId: string, legal: LegalSettings): P
     .upsert({ user_id: userId, legal }, { onConflict: 'user_id' })
 
   if (error) console.error('saveLegalSettings:', error)
+}
+
+// ── Profile settings (one row per user) ──────────────────────────────────────
+
+export async function getProfileSettings(userId: string): Promise<ProfileSettings | null> {
+  const { data, error } = await supabase
+    .from('user_settings')
+    .select('profile')
+    .eq('user_id', userId)
+    .single()
+
+  if (error || !data) return null
+  return (data.profile as ProfileSettings) ?? null
+}
+
+export async function saveProfileSettings(userId: string, profile: ProfileSettings): Promise<void> {
+  const { error } = await supabase
+    .from('user_settings')
+    .upsert({ user_id: userId, profile }, { onConflict: 'user_id' })
+
+  if (error) console.error('saveProfileSettings:', error)
+}
+
+// ── Catalogue access grants ───────────────────────────────────────────────────
+
+export async function getAccessGrants(userId: string): Promise<AccessGrant[]> {
+  const { data, error } = await supabase
+    .from('catalogue_access')
+    .select('id, token, grantee_name, grantee_email, created_at, last_accessed')
+    .eq('owner_id', userId)
+    .order('created_at', { ascending: false })
+
+  if (error || !data) return []
+  return data.map(r => ({
+    id: r.id,
+    token: r.token,
+    granteeName: r.grantee_name,
+    granteeEmail: r.grantee_email,
+    createdAt: r.created_at,
+    lastAccessed: r.last_accessed,
+  }))
+}
+
+export async function createAccessGrant(
+  userId: string,
+  granteeName: string,
+  granteeEmail: string,
+): Promise<AccessGrant | null> {
+  const { data, error } = await supabase
+    .from('catalogue_access')
+    .insert({ owner_id: userId, grantee_name: granteeName, grantee_email: granteeEmail })
+    .select('id, token, grantee_name, grantee_email, created_at, last_accessed')
+    .single()
+
+  if (error || !data) { console.error('createAccessGrant:', error); return null }
+  return {
+    id: data.id,
+    token: data.token,
+    granteeName: data.grantee_name,
+    granteeEmail: data.grantee_email,
+    createdAt: data.created_at,
+    lastAccessed: data.last_accessed,
+  }
+}
+
+export async function revokeAccessGrant(id: string, userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('catalogue_access')
+    .delete()
+    .eq('id', id)
+    .eq('owner_id', userId)
+
+  if (error) console.error('revokeAccessGrant:', error)
 }
