@@ -8,18 +8,26 @@ import { supabase } from './supabase'
 export async function uploadImage(
   file: File,
   userId: string,
-  artworkId: string
+  artworkId: string,
+  timeoutMs = 120_000
 ): Promise<string> {
   const ext = file.name.split('.').pop() ?? 'jpg'
   const path = `${userId}/${artworkId}.${ext}`
 
-  const { error } = await supabase.storage
+  // Race the upload against a timeout — Supabase has no built-in timeout and a
+  // stalled network connection would otherwise hang forever.
+  const uploadPromise = supabase.storage
     .from('artworks')
     .upload(path, file, {
       cacheControl: '31536000',
       upsert: false,
       contentType: file.type,
     })
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('Upload timed out')), timeoutMs)
+  )
+
+  const { error } = await Promise.race([uploadPromise, timeoutPromise])
 
   if (error) throw new Error(`Upload failed: ${error.message}`)
 
@@ -37,6 +45,12 @@ export async function compressFileForStorage(
   maxDimension = 2400
 ): Promise<File> {
   return new Promise((resolve) => {
+    let settled = false
+    // canvas.toBlob() can silently never call its callback under memory pressure.
+    // Fall back to the original file after 15 s so the upload always proceeds.
+    const fallback = setTimeout(() => { if (!settled) { settled = true; resolve(file) } }, 15_000)
+    const safeResolve = (f: File) => { if (!settled) { settled = true; clearTimeout(fallback); resolve(f) } }
+
     const img = new Image()
     const url = URL.createObjectURL(file)
     img.onload = () => {
@@ -47,14 +61,14 @@ export async function compressFileForStorage(
       canvas.height = Math.round(img.height * scale)
       canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
       canvas.toBlob(
-        blob => resolve(blob
+        blob => safeResolve(blob
           ? new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })
           : file
         ),
         'image/jpeg', 0.88
       )
     }
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
+    img.onerror = () => { URL.revokeObjectURL(url); safeResolve(file) }
     img.src = url
   })
 }
@@ -68,6 +82,10 @@ export async function compressBase64ForAnalysis(
   maxDimension = 1500
 ): Promise<string> {
   return new Promise((resolve) => {
+    let settled = false
+    const fallback = setTimeout(() => { if (!settled) { settled = true; resolve(base64) } }, 15_000)
+    const safeResolve = (s: string) => { if (!settled) { settled = true; clearTimeout(fallback); resolve(s) } }
+
     const img = new Image()
     img.onload = () => {
       const scale = Math.min(1, maxDimension / Math.max(img.width, img.height))
@@ -76,10 +94,48 @@ export async function compressBase64ForAnalysis(
       canvas.height = Math.round(img.height * scale)
       canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
       const compressed = canvas.toDataURL('image/jpeg', 0.85)
-      resolve(compressed)
+      safeResolve(compressed)
     }
-    img.onerror = () => resolve(base64) // fall back to original on error
+    img.onerror = () => safeResolve(base64)
     img.src = base64
+  })
+}
+
+/**
+ * Compresses an image File directly for sending to the Claude API.
+ * Uses an object URL internally — never materialises a large base64 in the JS heap,
+ * which keeps memory flat regardless of batch size.
+ */
+export async function compressFileForAnalysis(
+  file: File,
+  maxDimension = 1500
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const fallback = setTimeout(
+      () => { if (!settled) { settled = true; reject(new Error('compressFileForAnalysis timed out')) } },
+      15_000
+    )
+    const done = (result: string | Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(fallback)
+      if (result instanceof Error) reject(result)
+      else resolve(result)
+    }
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const scale = Math.min(1, maxDimension / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width  = Math.round(img.width  * scale)
+      canvas.height = Math.round(img.height * scale)
+      canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
+      done(canvas.toDataURL('image/jpeg', 0.85))
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); done(new Error('Image load failed')) }
+    img.src = url
   })
 }
 

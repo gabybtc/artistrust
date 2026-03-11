@@ -101,7 +101,11 @@ export async function upsertArtwork(artwork: Artwork, userId: string): Promise<v
 
 /** Bulk upsert — used by the debounced sync effect. Skips artworks still in base64. */
 export async function upsertArtworks(artworks: Artwork[], userId: string): Promise<void> {
-  const syncable = artworks.filter(a => !a.imageData.startsWith('data:'))
+  // Exclude artworks still using a base64 data URL or a temporary blob URL —
+  // both indicate the storage upload hasn't finished yet.
+  const syncable = artworks.filter(a =>
+    !a.imageData.startsWith('data:') && !a.imageData.startsWith('blob:')
+  )
   if (!syncable.length) return
 
   const { error } = await supabase

@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import { Artwork } from './types'
-import { uploadImage, compressBase64ForAnalysis, compressFileForStorage } from './uploadImage'
+import { uploadImage, compressFileForAnalysis, compressFileForStorage } from './uploadImage'
 
 // ─── Tuneable constants ───────────────────────────────────────────────────────
 const UPLOAD_CONCURRENCY  = 3   // simultaneous full-pipeline workers
@@ -126,32 +126,21 @@ export function useUploadQueue(options: {
     const artworkId = item.artworkId
 
     try {
-    // ── 1. Read file to base64 ────────────────────────────────────────────
-    patchItem(item.qid, { state: 'reading', _file: undefined })
+    // ── 1. Derive a title from filename ───────────────────────────────────
+    patchItem(item.qid, { state: 'uploading', _file: undefined })
 
-    let imageData: string
-    try {
-      imageData = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload  = () => resolve(reader.result as string)
-        reader.onerror = () => reject(new Error('FileReader failed'))
-        reader.readAsDataURL(file)
-      })
-    } catch {
-      patchItem(item.qid, { state: 'error', error: 'Could not read file' })
-      return
-    }
-
-    // ── 2. Derive a human title from filename ─────────────────────────────
     const fileTitle = file.name
       .replace(/\.[^.]+$/, '')
       .replace(/[_\-]+/g, ' ')
       .trim()
 
-    // ── 3. Create artwork card immediately — appears in gallery at once ───
+    // ── 2. Create artwork card — use a blob URL, not base64 ───────────────
+    // Blob URLs are browser-managed and don't inflate the JS heap, which
+    // prevents memory pressure when uploading large batches of high-res files.
+    const blobUrl = URL.createObjectURL(file)
     const artwork: Artwork = {
       id: artworkId,
-      imageData,
+      imageData: blobUrl,
       fileName: file.name,
       title: fileTitle,
       year: '', place: '', location: '',
@@ -167,19 +156,30 @@ export function useUploadQueue(options: {
     }
     onArtworkAdded(artwork)
 
-    patchItem(item.qid, { state: 'uploading' })
-
-    // ── 4. Storage upload + AI analysis — run in parallel ─────────────────
+    // ── 3. Storage upload + AI analysis — run in parallel ─────────────────
     const storagePromise = compressFileForStorage(file)
       .then(c => uploadImage(c, uid, artworkId))
-      .then(url => onArtworkUpdated(artworkId, { imageData: url }))
-      .catch(err => console.error('Storage upload error:', file.name, err))
+      .then(url => {
+        URL.revokeObjectURL(blobUrl)
+        onArtworkUpdated(artworkId, { imageData: url })
+      })
+      .catch(err => {
+        URL.revokeObjectURL(blobUrl)
+        console.error('Storage upload error:', file.name, err)
+      })
 
     const analysisPromise = (async () => {
       patchItem(item.qid, { state: 'analyzing' })
       onArtworkUpdated(artworkId, { status: 'analyzing' })
 
-      const compressed = await compressBase64ForAnalysis(imageData)
+      // Compress directly from the File — never creates a full base64 in memory
+      let compressed: string
+      try {
+        compressed = await compressFileForAnalysis(file)
+      } catch {
+        onArtworkUpdated(artworkId, { status: 'ready' })
+        return
+      }
 
       const attempt = async (): Promise<boolean> => {
         try {

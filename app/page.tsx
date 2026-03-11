@@ -39,10 +39,20 @@ export default function Home() {
     return () => subscription.unsubscribe()
   }, [])
 
-  // Load artworks from DB when user signs in; clear when signed out
+  // Load artworks from DB when user signs in; clear when signed out.
+  // Reset any artworks stuck in transient upload/analysis states from a
+  // previous session — these states only exist while the app is actively
+  // processing and should never persist across page reloads.
   useEffect(() => {
     if (!user) { setArtworks([]); return }
-    fetchArtworks(user.id).then(setArtworks)
+    fetchArtworks(user.id).then(artworks => {
+      const fixed = artworks.map(a =>
+        (a.status === 'analyzing' || a.status === 'uploading')
+          ? { ...a, status: 'ready' as const }
+          : a
+      )
+      setArtworks(fixed)
+    })
   }, [user])
 
   // Debounced sync to DB — only persists artworks that have a real URL (not temp base64)
