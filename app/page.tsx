@@ -1,9 +1,9 @@
 "use client"
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { User } from '@supabase/supabase-js'
-import { Artwork } from '@/lib/types'
+import { Artwork, Tab } from '@/lib/types'
 import { supabase } from '@/lib/supabase'
-import { fetchArtworks, upsertArtworks, deleteArtworkFromDB } from '@/lib/db'
+import { fetchArtworks, upsertArtworks, deleteArtworkFromDB, getTabSettings, saveTabSettings, DEFAULT_TABS } from '@/lib/db'
 import { useUploadQueue } from '@/lib/useUploadQueue'
 import ArtworkModal from './components/ArtworkModal'
 import ArtworkCard from './components/ArtworkCard'
@@ -17,13 +17,18 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null)
   const [artworks, setArtworks] = useState<Artwork[]>([])
   const [selected, setSelected] = useState<Artwork | null>(null)
-  const [activeTab, setActiveTab] = useState<'painting' | 'photography'>('painting')
+  const [tabs, setTabs] = useState<Tab[]>(DEFAULT_TABS)
+  const [activeTab, setActiveTab] = useState<string>(DEFAULT_TABS[0].id)
+  const [editingTabId, setEditingTabId] = useState<string | null>(null)
+  const [editingTabLabel, setEditingTabLabel] = useState('')
   const [filter, setFilter] = useState<'all' | 'complete' | 'pending'>('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [mounted, setMounted] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [legalOpen, setLegalOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [moveToTab, setMoveToTab] = useState<string>('')
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -52,6 +57,12 @@ export default function Home() {
           : a
       )
       setArtworks(fixed)
+    })
+    getTabSettings(user.id).then(saved => {
+      if (saved) {
+        setTabs(saved)
+        setActiveTab(saved[0].id)
+      }
     })
   }, [user])
 
@@ -105,14 +116,112 @@ export default function Home() {
     if (user) deleteArtworkFromDB(id, user.id)
   }, [user])
 
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }, [])
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
+
+  const selectAll = useCallback(() => {
+    setSelectedIds(new Set(
+      artworks
+        .filter(a => {
+          if ((a.mediaType ?? tabs[0].id) !== activeTab) return false
+          if (filter === 'complete' && a.status !== 'complete') return false
+          if (filter === 'pending' && a.status === 'complete') return false
+          if (searchTerm) {
+            const q = searchTerm.toLowerCase()
+            return !!(
+              a.title?.toLowerCase().includes(q) ||
+              a.year?.includes(q) ||
+              a.place?.toLowerCase().includes(q) ||
+              a.aiAnalysis?.style?.toLowerCase().includes(q) ||
+              a.aiAnalysis?.medium?.toLowerCase().includes(q) ||
+              a.aiAnalysis?.subject?.toLowerCase().includes(q)
+            )
+          }
+          return true
+        })
+        .map(a => a.id)
+    ))
+  }, [artworks, tabs, activeTab, filter, searchTerm])
+
+  const handleBulkDelete = useCallback(() => {
+    const ids = Array.from(selectedIds)
+    setArtworks(prev => prev.filter(a => !selectedIds.has(a.id)))
+    setSelected(prev => (prev && selectedIds.has(prev.id) ? null : prev))
+    if (user) ids.forEach(id => deleteArtworkFromDB(id, user.id))
+    setSelectedIds(new Set())
+    showToast(`${ids.length} ${ids.length === 1 ? 'work' : 'works'} deleted`)
+  }, [selectedIds, user, showToast])
+
+  const handleBulkMove = useCallback((targetTabId: string) => {
+    const ids = Array.from(selectedIds)
+    setArtworks(prev =>
+      prev.map(a => selectedIds.has(a.id) ? { ...a, mediaType: targetTabId } : a)
+    )
+    if (user) setArtworks(prev => { upsertArtworks(prev, user.id); return prev })
+    setSelectedIds(new Set())
+    const label = tabs.find(t => t.id === targetTabId)?.label ?? targetTabId
+    showToast(`${ids.length} ${ids.length === 1 ? 'work' : 'works'} moved to ${label}`)
+  }, [selectedIds, user, tabs, showToast])
+
   const handleSignOut = useCallback(async () => {
     await supabase.auth.signOut()
     setArtworks([])
     setSelected(null)
+    setTabs(DEFAULT_TABS)
+    setActiveTab(DEFAULT_TABS[0].id)
   }, [])
 
+  // ── Tab management ────────────────────────────────────────────────────────
+  const commitTabRename = useCallback((id: string, newLabel: string) => {
+    const trimmed = newLabel.trim()
+    if (!trimmed) { setEditingTabId(null); return }
+    setTabs(prev => {
+      const next = prev.map(t => t.id === id ? { ...t, label: trimmed } : t)
+      if (user) saveTabSettings(user.id, next)
+      return next
+    })
+    setEditingTabId(null)
+  }, [user])
+
+  const handleAddTab = useCallback(() => {
+    const id = `tab-${Date.now()}`
+    const newTab: Tab = { id, label: 'New Tab' }
+    setTabs(prev => {
+      const next = [...prev, newTab]
+      if (user) saveTabSettings(user.id, next)
+      return next
+    })
+    setActiveTab(id)
+    setFilter('all')
+    setSearchTerm('')
+    // start renaming immediately
+    setEditingTabLabel('New Tab')
+    setEditingTabId(id)
+  }, [user])
+
+  const handleDeleteTab = useCallback((id: string) => {
+    setTabs(prev => {
+      if (prev.length <= 1) return prev
+      const next = prev.filter(t => t.id !== id)
+      if (user) saveTabSettings(user.id, next)
+      return next
+    })
+    setActiveTab(prev => {
+      if (prev !== id) return prev
+      const remaining = tabs.filter(t => t.id !== id)
+      return remaining[0]?.id ?? DEFAULT_TABS[0].id
+    })
+  }, [user, tabs])
+
   const filtered = artworks.filter(a => {
-    if ((a.mediaType ?? 'painting') !== activeTab) return false
+    if ((a.mediaType ?? tabs[0].id) !== activeTab) return false
     if (filter === 'complete' && a.status !== 'complete') return false
     if (filter === 'pending' && a.status === 'complete') return false
     if (searchTerm) {
@@ -129,7 +238,7 @@ export default function Home() {
     return true
   })
 
-  const tabArtworks = artworks.filter(a => (a.mediaType ?? 'painting') === activeTab)
+  const tabArtworks = artworks.filter(a => (a.mediaType ?? tabs[0].id) === activeTab)
 
   const stats = {
     total: tabArtworks.length,
@@ -293,44 +402,142 @@ export default function Home() {
           padding: '0 40px',
           background: 'var(--surface)',
         }}>
-          {([
-            { key: 'painting',     label: 'Paintings' },
-            { key: 'photography',  label: 'Photography' },
-          ] as const).map(tab => {
-            const count = artworks.filter(a => (a.mediaType ?? 'painting') === tab.key).length
-            const isActive = activeTab === tab.key
+          {tabs.map(tab => {
+            const count = artworks.filter(a => (a.mediaType ?? tabs[0].id) === tab.id).length
+            const isActive = activeTab === tab.id
             return (
-              <button
-                key={tab.key}
-                onClick={() => { setActiveTab(tab.key); setFilter('all'); setSearchTerm('') }}
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  fontFamily: 'var(--font-body)', fontSize: 12,
-                  fontWeight: 400, letterSpacing: '0.14em', textTransform: 'uppercase',
-                  color: isActive ? 'var(--text)' : 'var(--text-dim)',
-                  padding: '14px 24px 12px',
-                  borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
-                  marginBottom: -1,
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  transition: 'color 0.18s',
+              <div
+                key={tab.id}
+                style={{ position: 'relative', display: 'flex', alignItems: 'center' }}
+                onMouseEnter={e => {
+                  const del = e.currentTarget.querySelector<HTMLButtonElement>('.tab-delete')
+                  if (del) del.style.opacity = '1'
+                }}
+                onMouseLeave={e => {
+                  const del = e.currentTarget.querySelector<HTMLButtonElement>('.tab-delete')
+                  if (del) del.style.opacity = '0'
                 }}
               >
-                {tab.label}
-                {count > 0 && (
-                  <span style={{
-                    fontSize: 10,
-                    background: isActive ? 'rgba(201,169,110,0.15)' : 'rgba(255,255,255,0.06)',
-                    borderRadius: 100,
-                    padding: '2px 7px',
-                    color: isActive ? 'var(--accent)' : 'var(--text-dim)',
-                    fontWeight: 500,
-                  }}>
-                    {count}
-                  </span>
+                {editingTabId === tab.id ? (
+                  <input
+                    autoFocus
+                    value={editingTabLabel}
+                    onChange={e => setEditingTabLabel(e.target.value)}
+                    onBlur={() => commitTabRename(tab.id, editingTabLabel)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitTabRename(tab.id, editingTabLabel)
+                      if (e.key === 'Escape') setEditingTabId(null)
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      borderBottom: '1px solid var(--accent)',
+                      outline: 'none',
+                      fontFamily: 'var(--font-body)',
+                      fontSize: 12,
+                      fontWeight: 400,
+                      letterSpacing: '0.14em',
+                      textTransform: 'uppercase',
+                      color: 'var(--text)',
+                      padding: '14px 4px 12px',
+                      width: Math.max(80, editingTabLabel.length * 9),
+                      marginBottom: -1,
+                    }}
+                  />
+                ) : (
+                  <button
+                    onClick={() => { setActiveTab(tab.id); setFilter('all'); setSearchTerm('') }}
+                    onDoubleClick={() => { setEditingTabLabel(tab.label); setEditingTabId(tab.id) }}
+                    title="Double-click to rename"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      fontFamily: 'var(--font-body)', fontSize: 12,
+                      fontWeight: 400, letterSpacing: '0.14em', textTransform: 'uppercase',
+                      color: isActive ? 'var(--text)' : 'var(--text-dim)',
+                      padding: '14px 20px 12px 24px',
+                      borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+                      marginBottom: -1,
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      transition: 'color 0.18s',
+                    }}
+                  >
+                    {tab.label}
+                    {count > 0 && (
+                      <span style={{
+                        fontSize: 10,
+                        background: isActive ? 'rgba(201,169,110,0.15)' : 'rgba(255,255,255,0.06)',
+                        borderRadius: 100,
+                        padding: '2px 7px',
+                        color: isActive ? 'var(--accent)' : 'var(--text-dim)',
+                        fontWeight: 500,
+                      }}>
+                        {count}
+                      </span>
+                    )}
+                  </button>
                 )}
-              </button>
+
+                {/* Inline rename icon (hover on active tab) */}
+                {!editingTabId && isActive && (
+                  <button
+                    onClick={() => { setEditingTabLabel(tab.label); setEditingTabId(tab.id) }}
+                    title="Rename tab"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      padding: '0 4px', color: 'var(--text-dim)',
+                      display: 'flex', alignItems: 'center',
+                      opacity: 0, transition: 'opacity 0.15s',
+                    }}
+                    className="tab-delete"
+                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent)')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                      <path d="M7.5 1.5l2 2L3 10H1V8L7.5 1.5z" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                )}
+
+                {/* Delete tab button (hover, only when >1 tab) */}
+                {tabs.length > 1 && !editingTabId && (
+                  <button
+                    className="tab-delete"
+                    onClick={() => handleDeleteTab(tab.id)}
+                    title="Delete tab"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      padding: '0 2px', color: 'var(--text-dim)',
+                      display: 'flex', alignItems: 'center',
+                      opacity: 0, transition: 'opacity 0.15s',
+                      fontSize: 14, lineHeight: 1,
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.color = '#e05a5a')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             )
           })}
+
+          {/* Add tab button */}
+          <button
+            onClick={handleAddTab}
+            title="Add a new tab"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--text-dim)',
+              fontSize: 18, lineHeight: 1,
+              padding: '10px 12px',
+              display: 'flex', alignItems: 'center',
+              transition: 'color 0.18s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+          >
+            +
+          </button>
         </div>
 
         {/* ── Page content ── */}
@@ -340,7 +547,7 @@ export default function Home() {
           <div style={{ marginBottom: 32 }}>
             <DropZone
               onFiles={handleFiles}
-              label={activeTab === 'photography' ? 'Drag photographs & scans here' : 'Drag paintings here'}
+              label={activeTab === 'photography' ? 'Drag photographs & scans here' : `Drag ${tabs.find(t => t.id === activeTab)?.label.toLowerCase() ?? 'works'} here`}
             />
           </div>
 
@@ -417,6 +624,106 @@ export default function Home() {
             </div>
           )}
 
+          {/* Bulk selection toolbar */}
+          {selectedIds.size > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              marginBottom: 18,
+              padding: '10px 16px',
+              background: 'rgba(201,169,110,0.07)',
+              border: '1px solid var(--accent-dim)',
+              borderRadius: 3,
+            }}>
+              <span style={{
+                fontSize: 13, color: 'var(--accent)',
+                fontFamily: 'var(--font-body)', letterSpacing: '0.04em',
+              }}>
+                {selectedIds.size} selected
+              </span>
+
+              <button
+                onClick={selectedIds.size === filtered.length ? clearSelection : selectAll}
+                style={{
+                  background: 'transparent', border: '1px solid var(--border)',
+                  borderRadius: 2, padding: '4px 11px',
+                  color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+                  fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  cursor: 'pointer',
+                }}
+              >
+                {selectedIds.size === filtered.length ? 'Deselect all' : 'Select all'}
+              </button>
+
+              <div style={{ flex: 1 }} />
+
+              {/* Move to tab */}
+              {tabs.length > 1 && (
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                    Move to
+                  </span>
+                  <select
+                    value={moveToTab}
+                    onChange={e => {
+                      const t = e.target.value
+                      if (!t) return
+                      setMoveToTab('')
+                      handleBulkMove(t)
+                    }}
+                    style={{
+                      background: 'var(--surface)', border: '1px solid var(--border)',
+                      borderRadius: 2, padding: '5px 10px',
+                      color: 'var(--text)', fontFamily: 'var(--font-body)',
+                      fontSize: 11, letterSpacing: '0.08em', cursor: 'pointer',
+                      outline: 'none',
+                    }}
+                  >
+                    <option value="">— pick tab —</option>
+                    {tabs.filter(t => t.id !== activeTab).map(t => (
+                      <option key={t.id} value={t.id}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <button
+                onClick={handleBulkDelete}
+                style={{
+                  background: 'transparent', border: '1px solid #e05a5a',
+                  borderRadius: 2, padding: '5px 16px',
+                  color: '#e05a5a', fontFamily: 'var(--font-body)',
+                  fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  cursor: 'pointer', transition: 'all 0.18s',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(224,90,90,0.1)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'transparent'
+                }}
+              >
+                <svg width="11" height="12" viewBox="0 0 11 12" fill="none">
+                  <path d="M1 3h9M4 3V2h3v1M2 3l.6 7.5A1 1 0 003.6 11h3.8a1 1 0 001-.95L9 3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Delete
+              </button>
+
+              <button
+                onClick={clearSelection}
+                style={{
+                  background: 'transparent', border: '1px solid var(--border)',
+                  borderRadius: 2, padding: '5px 11px',
+                  color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+                  fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
           {/* Grid */}
           {filtered.length > 0 ? (
             <div style={{
@@ -429,6 +736,9 @@ export default function Home() {
                   key={artwork.id}
                   artwork={artwork}
                   onClick={() => setSelected(artwork)}
+                  selectionMode={selectedIds.size > 0}
+                  isSelected={selectedIds.has(artwork.id)}
+                  onSelect={toggleSelect}
                 />
               ))}
             </div>
@@ -439,15 +749,13 @@ export default function Home() {
                 fontSize: 20, fontStyle: 'italic', fontWeight: 400,
                 color: 'var(--muted)', marginBottom: 8,
               }}>
-                {activeTab === 'photography' ? 'Your photography archive awaits' : 'Your catalogue awaits'}
+                {`Your ${tabs.find(t => t.id === activeTab)?.label.toLowerCase() ?? 'catalogue'} awaits`}
               </p>
               <small style={{
                 fontFamily: 'var(--font-body)',
                 fontSize: 13, color: 'var(--muted)', letterSpacing: '0.06em',
               }}>
-                {activeTab === 'photography'
-                  ? 'Drag scanned film, slides, or photographs above to begin'
-                  : 'Drag photographs of your works above to begin'}
+                Drag files above to begin
               </small>
             </div>
           ) : (
@@ -466,6 +774,7 @@ export default function Home() {
         {selected && (
           <ArtworkModal
             artwork={selected}
+            tabs={tabs}
             onClose={() => setSelected(null)}
             onUpdate={(updates) => handleUpdate(selected.id, updates)}
             onDelete={() => handleDelete(selected.id)}

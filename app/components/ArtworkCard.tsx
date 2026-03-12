@@ -1,45 +1,88 @@
 'use client'
 
+import { useState } from 'react'
 import { Artwork } from '@/lib/types'
 
 interface ArtworkCardProps {
   artwork: Artwork
   onClick: () => void
+  selectionMode?: boolean
+  isSelected?: boolean
+  onSelect?: (id: string) => void
 }
 
-export default function ArtworkCard({ artwork, onClick }: ArtworkCardProps) {
+export default function ArtworkCard({ artwork, onClick, selectionMode, isSelected, onSelect }: ArtworkCardProps) {
+  const [hovered, setHovered] = useState(false)
   const title = artwork.title || artwork.aiAnalysis?.suggestedTitle || ''
   const isProcessing = artwork.status === 'uploading' || artwork.status === 'analyzing'
   const isComplete = artwork.status === 'complete'
   const isUntitled = !title
 
+  const handleClick = () => {
+    if (isProcessing) return
+    if (selectionMode && onSelect) {
+      onSelect(artwork.id)
+    } else {
+      onClick()
+    }
+  }
+
+  const showCheckbox = selectionMode || hovered
+
   return (
     <div
-      onClick={isProcessing ? undefined : onClick}
-      style={{
-        background: 'var(--card)',
-        border: '1px solid var(--border)',
-        borderRadius: 2,
-        overflow: 'hidden',
-        cursor: isProcessing ? 'default' : 'pointer',
-        transition: 'border-color 0.22s, transform 0.22s',
-        animation: 'fadeUp 0.4s ease forwards',
-        opacity: 0,
-      }}
+      onClick={handleClick}
       onMouseEnter={e => {
-        if (isProcessing) return
+        setHovered(true)
+        if (isProcessing || selectionMode) return
         const el = e.currentTarget as HTMLDivElement
         el.style.borderColor = 'var(--accent-dim)'
         el.style.transform = 'translateY(-2px)'
       }}
       onMouseLeave={e => {
+        setHovered(false)
         const el = e.currentTarget as HTMLDivElement
-        el.style.borderColor = 'var(--border)'
+        el.style.borderColor = isSelected ? 'var(--accent)' : 'var(--border)'
         el.style.transform = 'translateY(0)'
+      }}
+      style={{
+        background: 'var(--card)',
+        border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+        borderRadius: 2,
+        overflow: 'hidden',
+        cursor: isProcessing ? 'default' : 'pointer',
+        transition: 'border-color 0.22s, transform 0.22s, box-shadow 0.22s',
+        animation: 'fadeUp 0.4s ease forwards',
+        opacity: 0,
+        boxShadow: isSelected ? '0 0 0 2px rgba(201,169,110,0.25)' : undefined,
+        position: 'relative',
       }}
     >
       {/* Image pane */}
       <div style={{ position: 'relative', aspectRatio: '4/3', overflow: 'hidden', background: 'var(--surface)' }}>
+
+        {/* Selection checkbox */}
+        {!isProcessing && showCheckbox && (
+          <div
+            onClick={e => { e.stopPropagation(); onSelect?.(artwork.id) }}
+            style={{
+              position: 'absolute', top: 9, left: 9, zIndex: 10,
+              width: 20, height: 20, borderRadius: 4,
+              background: isSelected ? 'var(--accent)' : 'rgba(10,10,10,0.6)',
+              border: `1.5px solid ${isSelected ? 'var(--accent)' : 'rgba(255,255,255,0.45)'}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'background 0.15s, border-color 0.15s',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            {isSelected && (
+              <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
+                <path d="M1 4l3.5 3.5L10 1" stroke="#0a0a0a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </div>
+        )}
+
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={artwork.imageData}
@@ -117,8 +160,8 @@ export default function ArtworkCard({ artwork, onClick }: ArtworkCardProps) {
           </div>
         )}
 
-        {/* Complete dot — top left */}
-        {isComplete && (
+        {/* Complete dot — top left (hidden when checkbox is visible) */}
+        {isComplete && !showCheckbox && (
           <div style={{
             position: 'absolute', top: 9, left: 9,
             width: 6, height: 6, borderRadius: '50%',

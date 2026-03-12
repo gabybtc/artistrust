@@ -1,5 +1,15 @@
 import { supabase } from './supabase'
-import type { Artwork, LegalSettings, ProfileSettings, AccessGrant } from './types'
+import type { Artwork, LegalSettings, ProfileSettings, AccessGrant, Tab } from './types'
+
+// Supabase PostgrestError has non-enumerable props — extract them explicitly.
+function dbErr(label: string, err: unknown): void {
+  if (err && typeof err === 'object') {
+    const { message, details, hint, code } = err as Record<string, unknown>
+    console.error(`${label}:`, { message, details, hint, code })
+  } else {
+    console.error(`${label}:`, err)
+  }
+}
 
 // ── Row shape (matches the Supabase artworks table) ───────────────────────────
 interface ArtworkRow {
@@ -86,7 +96,7 @@ export async function fetchArtworks(userId: string): Promise<Artwork[]> {
     .eq('user_id', userId)
     .order('uploaded_at', { ascending: false })
 
-  if (error) { console.error('fetchArtworks:', error); return [] }
+  if (error) { dbErr('fetchArtworks', error); return [] }
   return (data as ArtworkRow[]).map(fromRow)
 }
 
@@ -96,7 +106,7 @@ export async function upsertArtwork(artwork: Artwork, userId: string): Promise<v
     .from('artworks')
     .upsert(toRow(artwork, userId), { onConflict: 'id' })
 
-  if (error) console.error('upsertArtwork:', error)
+  if (error) dbErr('upsertArtwork', error)
 }
 
 /** Bulk upsert — used by the debounced sync effect. Skips artworks still in base64. */
@@ -112,7 +122,7 @@ export async function upsertArtworks(artworks: Artwork[], userId: string): Promi
     .from('artworks')
     .upsert(syncable.map(a => toRow(a, userId)), { onConflict: 'id' })
 
-  if (error) console.error('upsertArtworks:', error)
+  if (error) dbErr('upsertArtworks', error)
 }
 
 export async function deleteArtworkFromDB(id: string, userId: string): Promise<void> {
@@ -122,7 +132,7 @@ export async function deleteArtworkFromDB(id: string, userId: string): Promise<v
     .eq('id', id)
     .eq('user_id', userId)
 
-  if (error) console.error('deleteArtworkFromDB:', error)
+  if (error) dbErr('deleteArtworkFromDB', error)
 }
 
 // ── Legal settings (one row per user) ────────────────────────────────────────
@@ -143,7 +153,7 @@ export async function saveLegalSettings(userId: string, legal: LegalSettings): P
     .from('user_settings')
     .upsert({ user_id: userId, legal }, { onConflict: 'user_id' })
 
-  if (error) console.error('saveLegalSettings:', error)
+  if (error) dbErr('saveLegalSettings', error)
 }
 
 // ── Profile settings (one row per user) ──────────────────────────────────────
@@ -164,7 +174,7 @@ export async function saveProfileSettings(userId: string, profile: ProfileSettin
     .from('user_settings')
     .upsert({ user_id: userId, profile }, { onConflict: 'user_id' })
 
-  if (error) console.error('saveProfileSettings:', error)
+  if (error) dbErr('saveProfileSettings', error)
 }
 
 // ── Catalogue access grants ───────────────────────────────────────────────────
@@ -198,7 +208,7 @@ export async function createAccessGrant(
     .select('id, token, grantee_name, grantee_email, created_at, last_accessed')
     .single()
 
-  if (error || !data) { console.error('createAccessGrant:', error); return null }
+  if (error || !data) { dbErr('createAccessGrant', error); return null }
   return {
     id: data.id,
     token: data.token,
@@ -216,5 +226,32 @@ export async function revokeAccessGrant(id: string, userId: string): Promise<voi
     .eq('id', id)
     .eq('owner_id', userId)
 
-  if (error) console.error('revokeAccessGrant:', error)
+  if (error) dbErr('revokeAccessGrant', error)
+}
+
+// ── Tab settings (custom catalogue categories) ────────────────────────────────────────
+
+export const DEFAULT_TABS: Tab[] = [
+  { id: 'painting',     label: 'Paintings' },
+  { id: 'photography',  label: 'Photography' },
+]
+
+export async function getTabSettings(userId: string): Promise<Tab[] | null> {
+  const { data, error } = await supabase
+    .from('user_settings')
+    .select('tabs')
+    .eq('user_id', userId)
+    .single()
+
+  if (error || !data) return null
+  const tabs = data.tabs as Tab[] | null
+  return Array.isArray(tabs) && tabs.length > 0 ? tabs : null
+}
+
+export async function saveTabSettings(userId: string, tabs: Tab[]): Promise<void> {
+  const { error } = await supabase
+    .from('user_settings')
+    .upsert({ user_id: userId, tabs }, { onConflict: 'user_id' })
+
+  if (error) dbErr('saveTabSettings', error)
 }

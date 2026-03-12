@@ -41,8 +41,12 @@ create table if not exists user_settings (
   user_id  uuid primary key references auth.users(id) on delete cascade,
   legal    jsonb default '{}'::jsonb,   -- LegalSettings object
   profile  jsonb default '{}'::jsonb,   -- ProfileSettings object
+  tabs     jsonb default null,          -- Tab[] (custom catalogue categories)
   updated_at timestamptz default now()
 );
+
+-- Add tabs column if this table already existed before this migration
+alter table user_settings add column if not exists tabs jsonb default null;
 
 alter table user_settings enable row level security;
 

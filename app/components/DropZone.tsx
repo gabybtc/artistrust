@@ -7,11 +7,15 @@ interface DropZoneProps {
   label?: string
 }
 
+function isAcceptedImage(f: File): boolean {
+  return f.type.startsWith('image/') || /\.tiff?$/i.test(f.name)
+}
+
 async function collectFromEntry(entry: FileSystemEntry): Promise<File[]> {
   if (entry.isFile) {
     return new Promise(resolve => {
       (entry as FileSystemFileEntry).file(
-        f => resolve(f.type.startsWith('image/') ? [f] : []),
+        f => resolve(isAcceptedImage(f) ? [f] : []),
         () => resolve([])
       )
     })
@@ -42,7 +46,7 @@ export default function DropZone({ onFiles, label = 'Drag paintings here' }: Dro
 
   const handleFileList = useCallback((files: FileList | null) => {
     if (!files) return
-    const images = Array.from(files).filter(f => f.type.startsWith('image/'))
+    const images = Array.from(files).filter(isAcceptedImage)
     if (images.length) onFiles(images)
   }, [onFiles])
 
@@ -121,7 +125,7 @@ export default function DropZone({ onFiles, label = 'Drag paintings here' }: Dro
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,.tif,.tiff"
         multiple
         style={{ display: 'none' }}
         onChange={e => { handleFileList(e.target.files); e.target.value = '' }}
@@ -175,7 +179,7 @@ export default function DropZone({ onFiles, label = 'Drag paintings here' }: Dro
             fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
             color: 'var(--text-dim)', margin: '4px 0 0',
           }}>
-            Drop images or entire folders · JPG · PNG · WEBP · No limit
+            Drop images or entire folders · JPG · PNG · WEBP · TIFF · No limit
           </p>
 
           {/* Browse buttons */}

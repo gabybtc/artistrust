@@ -82,7 +82,7 @@ function makeSemaphore(n: number) {
 // ─── Hook ──────────────────────────────────────────────────────────────────────
 export function useUploadQueue(options: {
   userId: string | null
-  activeTab: 'painting' | 'photography'
+  activeTab: string
   onArtworkAdded: (artwork: Artwork) => void
   onArtworkUpdated: (id: string, updates: Partial<Artwork>) => void
 }): UploadQueueHandle {

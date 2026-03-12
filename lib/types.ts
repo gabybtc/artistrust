@@ -19,7 +19,7 @@ export interface Artwork {
   height: string
   unit: 'cm' | 'in'
   material: string
-  mediaType: 'painting' | 'photography'
+  mediaType: string
   status: 'uploading' | 'analyzing' | 'ready' | 'complete'
   uploadedAt: string
   aiAnalysis?: AiAnalysis
@@ -29,6 +29,12 @@ export interface Artwork {
   copyrightHolder: string   // defaults to artist name
   copyrightYear: string     // defaults to year of creation
   copyrightRegNumber: string // registration number if registered
+}
+
+/** A user-defined catalogue tab (category) */
+export interface Tab {
+  id: string      // slug-like unique key, e.g. "painting", "street-photography"
+  label: string   // display name, e.g. "Paintings", "Street Photography"
 }
 
 /** Account-level legal designee settings — one record per user */

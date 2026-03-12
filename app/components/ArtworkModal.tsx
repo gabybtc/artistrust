@@ -1,10 +1,11 @@
 "use client"
 import { useState, useEffect } from 'react'
-import { Artwork } from '@/lib/types'
+import { Artwork, Tab } from '@/lib/types'
 import VoiceRecorder from './VoiceRecorder'
 
 interface ArtworkModalProps {
   artwork: Artwork
+  tabs: Tab[]
   onClose: () => void
   onUpdate: (updated: Partial<Artwork>) => void
   onDelete?: () => void
@@ -35,7 +36,7 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 6,
 }
 
-export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onSaved }: ArtworkModalProps) {
+export default function ArtworkModal({ artwork, tabs, onClose, onUpdate, onDelete, onSaved }: ArtworkModalProps) {
   const displayTitle = artwork.title || artwork.aiAnalysis?.suggestedTitle || 'Untitled'
   const medium = artwork.material || artwork.aiAnalysis?.medium
 
@@ -48,7 +49,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
     height:             artwork.height   || '',
     unit:               (artwork.unit    || 'cm') as 'cm' | 'in',
     material:           artwork.material || artwork.aiAnalysis?.medium || '',
-    mediaType:          (artwork.mediaType || 'painting') as 'painting' | 'photography',
+    mediaType:          artwork.mediaType || (tabs[0]?.id ?? 'painting'),
     copyrightStatus:    artwork.copyrightStatus    || 'automatic' as 'automatic' | 'registered',
     copyrightHolder:    artwork.copyrightHolder    || '',
     copyrightYear:      artwork.copyrightYear      || artwork.year || new Date().getFullYear().toString(),
@@ -117,7 +118,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
               letterSpacing: '0.14em', textTransform: 'uppercase',
               color: 'var(--text-dim)',
             }}>
-              {form.mediaType === 'photography' ? 'Photography' : 'Paintings'}{' '}
+              {(tabs.find(t => t.id === form.mediaType)?.label ?? form.mediaType)}{' '}
               <span style={{ color: 'var(--text)' }}>/ {displayTitle}</span>
             </span>
             {medium && (
@@ -247,25 +248,25 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
             <div>
               <label style={labelStyle}>Category</label>
               <div style={{ display: 'flex', gap: 3 }}>
-                {(['painting', 'photography'] as const).map(type => (
+                {tabs.map(tab => (
                   <button
-                    key={type}
+                    key={tab.id}
                     type="button"
-                    onClick={() => setForm(f => ({ ...f, mediaType: type }))}
+                    onClick={() => setForm(f => ({ ...f, mediaType: tab.id }))}
                     style={{
                       flex: 1,
                       padding: '6px 0',
-                      background: form.mediaType === type ? 'rgba(201,169,110,0.12)' : 'transparent',
-                      border: `1px solid ${form.mediaType === type ? 'var(--accent-dim)' : 'var(--border)'}`,
+                      background: form.mediaType === tab.id ? 'rgba(201,169,110,0.12)' : 'transparent',
+                      border: `1px solid ${form.mediaType === tab.id ? 'var(--accent-dim)' : 'var(--border)'}`,
                       borderRadius: 2,
-                      color: form.mediaType === type ? 'var(--accent)' : 'var(--text-dim)',
+                      color: form.mediaType === tab.id ? 'var(--accent)' : 'var(--text-dim)',
                       fontFamily: 'var(--font-body)',
                       fontSize: 11, letterSpacing: '0.12em', textTransform: 'capitalize',
                       cursor: 'pointer',
                       transition: 'all 0.18s',
                     }}
                   >
-                    {type === 'painting' ? 'Painting' : 'Photography'}
+                    {tab.label}
                   </button>
                 ))}
               </div>
@@ -289,7 +290,7 @@ export default function ArtworkModal({ artwork, onClose, onUpdate, onDelete, onS
                 type="text"
                 value={form.material}
                 onChange={e => setForm(f => ({ ...f, material: e.target.value }))}
-                placeholder={form.mediaType === 'photography' ? 'e.g. 35mm Film, Silver gelatin' : 'e.g. Oil on linen'}
+                placeholder={form.mediaType === 'photography' ? 'e.g. 35mm Film, Silver gelatin' : 'e.g. Oil on linen, Acrylic'}
                 style={inputStyle}
                 onFocus={e => (e.target.style.borderColor = 'var(--accent-dim)')}
                 onBlur={e => (e.target.style.borderColor = 'var(--border)')}
