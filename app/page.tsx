@@ -29,6 +29,7 @@ export default function Home() {
   const [profileOpen, setProfileOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [moveToTab, setMoveToTab] = useState<string>('')
+  const [hoveredTabId, setHoveredTabId] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -409,14 +410,8 @@ export default function Home() {
               <div
                 key={tab.id}
                 style={{ position: 'relative', display: 'flex', alignItems: 'center' }}
-                onMouseEnter={e => {
-                  const del = e.currentTarget.querySelector<HTMLButtonElement>('.tab-delete')
-                  if (del) del.style.opacity = '1'
-                }}
-                onMouseLeave={e => {
-                  const del = e.currentTarget.querySelector<HTMLButtonElement>('.tab-delete')
-                  if (del) del.style.opacity = '0'
-                }}
+                onMouseEnter={() => setHoveredTabId(tab.id)}
+                onMouseLeave={() => setHoveredTabId(null)}
               >
                 {editingTabId === tab.id ? (
                   <input
@@ -486,9 +481,8 @@ export default function Home() {
                       background: 'none', border: 'none', cursor: 'pointer',
                       padding: '0 4px', color: 'var(--text-dim)',
                       display: 'flex', alignItems: 'center',
-                      opacity: 0, transition: 'opacity 0.15s',
+                      opacity: hoveredTabId === tab.id ? 1 : 0, transition: 'opacity 0.15s',
                     }}
-                    className="tab-delete"
                     onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent)')}
                     onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
                   >
@@ -501,14 +495,13 @@ export default function Home() {
                 {/* Delete tab button (hover, only when >1 tab) */}
                 {tabs.length > 1 && !editingTabId && (
                   <button
-                    className="tab-delete"
                     onClick={() => handleDeleteTab(tab.id)}
                     title="Delete tab"
                     style={{
                       background: 'none', border: 'none', cursor: 'pointer',
                       padding: '0 2px', color: 'var(--text-dim)',
                       display: 'flex', alignItems: 'center',
-                      opacity: 0, transition: 'opacity 0.15s',
+                      opacity: hoveredTabId === tab.id ? 1 : 0, transition: 'opacity 0.15s',
                       fontSize: 14, lineHeight: 1,
                     }}
                     onMouseEnter={e => (e.currentTarget.style.color = '#e05a5a')}
