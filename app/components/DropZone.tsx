@@ -5,6 +5,8 @@ import { useCallback, useRef, useState } from 'react'
 interface DropZoneProps {
   onFiles: (files: File[]) => void
   label?: string
+  onLegacyUpload?: () => void
+  showLegacyLimit?: boolean
 }
 
 function isAcceptedImage(f: File): boolean {
@@ -14,10 +16,17 @@ function isAcceptedImage(f: File): boolean {
 async function collectFromEntry(entry: FileSystemEntry): Promise<File[]> {
   if (entry.isFile) {
     return new Promise(resolve => {
-      (entry as FileSystemFileEntry).file(
-        f => resolve(isAcceptedImage(f) ? [f] : []),
-        () => resolve([])
-      )
+      (entry as FileSystemFileEntry).file(f => {
+        if (!isAcceptedImage(f)) { resolve([]); return }
+        // Attach the full path from the FileSystem API as a non-enumerable
+        // custom property so parseHints() can extract year hints from folder names.
+        Object.defineProperty(f, 'relativePath', {
+          value: entry.fullPath,
+          writable: false,
+          enumerable: false,
+        })
+        resolve([f])
+      }, () => resolve([]))
     })
   }
   if (entry.isDirectory) {
@@ -39,7 +48,7 @@ async function collectFromEntry(entry: FileSystemEntry): Promise<File[]> {
   return []
 }
 
-export default function DropZone({ onFiles, label = 'Drag paintings here' }: DropZoneProps) {
+export default function DropZone({ onFiles, label = 'Drag paintings here', onLegacyUpload, showLegacyLimit }: DropZoneProps) {
   const [dragging, setDragging] = useState(false)
   const fileInputRef   = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -205,6 +214,28 @@ export default function DropZone({ onFiles, label = 'Drag paintings here' }: Dro
               Browse folder
             </button>
           </div>
+
+          {/* Legacy archive import */}
+          {onLegacyUpload && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+              <button
+                onClick={e => { e.stopPropagation(); onLegacyUpload() }}
+                style={browseBtn(false)}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.color = accent }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-dim)' }}
+              >
+                Import legacy archive
+              </button>
+              {showLegacyLimit && (
+                <span style={{
+                  fontSize: 11, letterSpacing: '0.07em',
+                  color: 'var(--muted)', fontFamily: 'var(--font-body)',
+                }}>
+                  Up to 50 works per batch on your current plan
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
       </div>

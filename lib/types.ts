@@ -1,3 +1,5 @@
+export type { ExifData } from './extractExif'
+
 export interface AiAnalysis {
   style?: string
   medium?: string
@@ -24,11 +26,15 @@ export interface Artwork {
   uploadedAt: string
   aiAnalysis?: AiAnalysis
   voiceMemo?: string
+  series?: string
+  exifData?: import('./extractExif').ExifData
+  tags?: string[]
   // Copyright
   copyrightStatus: 'automatic' | 'registered'
   copyrightHolder: string   // defaults to artist name
   copyrightYear: string     // defaults to year of creation
   copyrightRegNumber: string // registration number if registered
+  isPublic?: boolean        // whether this artwork has a public share page
 }
 
 /** A user-defined catalogue tab (category) */
@@ -56,6 +62,15 @@ export interface ProfileSettings {
   bio: string
 }
 
+/**
+ * Sticky defaults applied to every newly queued artwork.
+ * Users set these once in the UploadDefaultsBar so they don't have to re-enter
+ * the same artist name, location, or medium for every piece.
+ */
+export type UploadDefaults = Partial<Pick<Artwork,
+  'copyrightHolder' | 'location' | 'material' | 'year' | 'series' | 'place'
+>>
+
 /** A shared-access grant — allows a named person to view the catalogue via a private link */
 export interface AccessGrant {
   id: string
@@ -64,4 +79,17 @@ export interface AccessGrant {
   granteeEmail: string
   createdAt: string
   lastAccessed: string | null
+}
+
+/** The user's active subscription record, mirroring the subscriptions table. */
+export interface UserSubscription {
+  userId: string
+  plan: import('./plans').Plan
+  billingInterval: import('./plans').BillingInterval | null
+  stripeCustomerId: string | null
+  stripeSubscriptionId: string | null
+  currentPeriodEnd: string | null
+  isBeta: boolean
+  createdAt: string
+  updatedAt: string
 }

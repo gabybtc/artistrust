@@ -20,8 +20,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { v4 as uuidv4 } from 'uuid'
-import { Artwork } from './types'
+import { Artwork, UploadDefaults } from './types'
 import { uploadImage, compressFileForAnalysis, compressFileForStorage } from './uploadImage'
+import { extractExif, exifToTags } from './extractExif'
+import { parseHints } from './parseFileName'
+import { PRESERVE_WORK_LIMIT } from './plans'
 
 // ─── Tuneable constants ───────────────────────────────────────────────────────
 const UPLOAD_CONCURRENCY  = 3   // simultaneous full-pipeline workers
@@ -85,8 +88,15 @@ export function useUploadQueue(options: {
   activeTab: string
   onArtworkAdded: (artwork: Artwork) => void
   onArtworkUpdated: (id: string, updates: Partial<Artwork>) => void
+  defaults?: UploadDefaults
+  /** Current total artwork count — used with canUpload to gate uploads */
+  currentArtworkCount?: number
+  /** Returns true when the user is allowed to upload another artwork */
+  canUpload?: (currentCount: number) => boolean
+  /** Called when an upload is blocked by the plan limit */
+  onPlanLimit?: () => void
 }): UploadQueueHandle {
-  const { userId, activeTab, onArtworkAdded, onArtworkUpdated } = options
+  const { userId, activeTab, onArtworkAdded, onArtworkUpdated, defaults, currentArtworkCount, canUpload, onPlanLimit } = options
 
   const [items, setItems] = useState<QueueItem[]>([])
   const [isPaused, setIsPaused] = useState(false)
@@ -97,14 +107,20 @@ export function useUploadQueue(options: {
   const pausedRef    = useRef(false)
   const activeTabRef = useRef(activeTab)
   const userIdRef    = useRef(userId)
+  const defaultsRef  = useRef<UploadDefaults>(defaults ?? {})
   // Track how many slots are actively running (read/upload/analyze)
   const activeCount  = useRef(0)
 
   useEffect(() => { activeTabRef.current = activeTab }, [activeTab])
   useEffect(() => { userIdRef.current = userId }, [userId])
+  useEffect(() => { defaultsRef.current = defaults ?? {} }, [defaults])
 
   // Rate-limit simultaneous Claude API calls (storage uploads use activeCount)
   const analysisSem = useRef(makeSemaphore(ANALYSIS_CONCURRENCY))
+
+  // Camera tags extracted from EXIF — keyed by artworkId, merged with AI tags
+  // when analysis completes so neither set overwrites the other.
+  const cameraTagsRef = useRef<Map<string, string[]>>(new Map())
 
   // ── Item state helpers ────────────────────────────────────────────────────
   const patchItem = useCallback((qid: string, patch: Partial<QueueItem>) => {
@@ -138,21 +154,23 @@ export function useUploadQueue(options: {
     // Blob URLs are browser-managed and don't inflate the JS heap, which
     // prevents memory pressure when uploading large batches of high-res files.
     const blobUrl = URL.createObjectURL(file)
+    const d = defaultsRef.current
     const artwork: Artwork = {
       id: artworkId,
       imageData: blobUrl,
       fileName: file.name,
       title: fileTitle,
-      year: '', place: '', location: '',
+      year: d.year ?? '', place: d.place ?? '', location: d.location ?? '',
       width: '', height: '', unit: 'cm',
-      material: '',
+      material: d.material ?? '',
       mediaType: activeTabRef.current,
       status: 'uploading',
       uploadedAt: new Date().toISOString(),
       copyrightStatus: 'automatic',
-      copyrightHolder: '',
-      copyrightYear: new Date().getFullYear().toString(),
+      copyrightHolder: d.copyrightHolder ?? '',
+      copyrightYear: d.year ?? new Date().getFullYear().toString(),
       copyrightRegNumber: '',
+      ...(d.series ? { series: d.series } : {}),
     }
     onArtworkAdded(artwork)
 
@@ -195,11 +213,17 @@ export function useUploadQueue(options: {
           if (!res.ok) return false
           const data = await res.json()
           if (data.analysis) {
+            const existingCameraTags = cameraTagsRef.current.get(artworkId) ?? []
+            const aiTags = Array.isArray(data.analysis.tags) ? data.analysis.tags : []
             onArtworkUpdated(artworkId, {
               status: 'ready',
               aiAnalysis: data.analysis,
               title: fileTitle || data.analysis.suggestedTitle || '',
-              material: data.analysis.medium || '',
+              // Only fill material from AI if the user has no default set
+              ...(data.analysis.medium && !defaultsRef.current.material
+                ? { material: data.analysis.medium }
+                : {}),
+              tags: [...existingCameraTags, ...aiTags],
             })
             return true
           }
@@ -263,8 +287,26 @@ export function useUploadQueue(options: {
   useEffect(() => { dispatchRef.current = dispatch }, [dispatch])
 
   // ── Public API ────────────────────────────────────────────────────────────
-  const addFiles = useCallback((files: File[]) => {
+  const addFiles = useCallback((inputFiles: File[]) => {
+    let files = [...inputFiles]
     if (!userIdRef.current) return
+
+    // Plan limit check — count existing artworks plus any already queued/active
+    if (canUpload) {
+      const alreadyQueued = itemsRef.current.filter(i => i.state !== 'done' && i.state !== 'error').length
+      const baseCount = (currentArtworkCount ?? 0) + alreadyQueued
+      if (!canUpload(baseCount)) {
+        onPlanLimit?.()
+        return
+      }
+      // Only enqueue as many files as there are remaining slots
+      const remaining = PRESERVE_WORK_LIMIT - baseCount
+      if (remaining < files.length) {
+        files = files.slice(0, Math.max(0, remaining))
+        if (files.length === 0) { onPlanLimit?.(); return }
+        onPlanLimit?.()
+      }
+    }
     const newItems: QueueItem[] = files.map(f => ({
       qid: uuidv4(),
       artworkId: uuidv4(),
@@ -276,9 +318,39 @@ export function useUploadQueue(options: {
     itemsRef.current = [...itemsRef.current, ...newItems]
     setItems([...itemsRef.current])
     setVisible(true)
+
+    // Extract EXIF + filename hints for each file, then update the artwork card
+    // before the item starts uploading. We do this async after enqueue so the
+    // queue UI shows up immediately without blocking.
+    newItems.forEach(async (item) => {
+      const file = item._file!
+      const [exif, hints] = await Promise.all([
+        extractExif(file),
+        Promise.resolve(
+          parseHints(
+            file.name,
+            // DropZone attaches relativePath when a folder is dropped
+            (file as File & { relativePath?: string }).relativePath
+          )
+        ),
+      ])
+      const year = exif.year ?? hints.year ?? ''
+      const cameraTags = exifToTags(exif)
+      if (year || Object.keys(exif).length > 0 || cameraTags.length > 0) {
+        if (cameraTags.length > 0) {
+          cameraTagsRef.current.set(item.artworkId, cameraTags)
+        }
+        onArtworkUpdated(item.artworkId, {
+          ...(year ? { year } : {}),
+          exifData: Object.keys(exif).length > 0 ? exif : undefined,
+          ...(cameraTags.length > 0 ? { tags: cameraTags } : {}),
+        })
+      }
+    })
+
     // Kick dispatch on next tick — gives React a chance to flush the state update
     setTimeout(() => dispatchRef.current(), 0)
-  }, [])
+  }, [onArtworkUpdated])
 
   const pause = useCallback(() => {
     pausedRef.current = true

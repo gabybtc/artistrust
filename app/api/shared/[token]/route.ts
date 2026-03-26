@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { canSharePortfolio } from '@/lib/plans'
+import type { Plan } from '@/lib/plans'
 
 export async function GET(
   _req: NextRequest,
@@ -26,6 +28,21 @@ export async function GET(
 
   if (grantError || !grant) {
     return NextResponse.json({ error: 'This link is invalid or has been revoked.' }, { status: 404 })
+  }
+
+  // Verify the portfolio owner has a plan that allows sharing (Archive or beta)
+  const { data: subRow } = await admin
+    .from('subscriptions')
+    .select('plan, is_beta')
+    .eq('user_id', grant.owner_id)
+    .single()
+
+  const ownerPlan: Plan = subRow?.is_beta ? 'beta' : ((subRow?.plan as Plan) ?? 'preserve')
+  if (!canSharePortfolio(ownerPlan)) {
+    return NextResponse.json(
+      { error: 'This portfolio is no longer publicly shared.' },
+      { status: 403 },
+    )
   }
 
   // Fetch artworks for the owner

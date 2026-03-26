@@ -300,13 +300,25 @@ export default function AuthModal({ onAuth }: Props) {
           </form>
         )}
 
-        <p style={{
-          textAlign: 'center', marginTop: 24,
-          fontSize: 12, color: 'var(--muted)',
-          fontFamily: 'var(--font-body)', lineHeight: 1.5,
+        <div style={{
+          marginTop: 24,
+          borderTop: '1px solid var(--border)',
+          paddingTop: 16,
         }}>
-          Your catalogue is private and encrypted.
-        </p>
+          <p style={{
+            textAlign: 'center',
+            fontSize: 11, color: 'var(--muted)',
+            fontFamily: 'var(--font-body)', lineHeight: 1.9,
+            letterSpacing: '0.02em',
+          }}>
+            Your images are stored on{' '}
+            <span style={{ color: 'var(--text-dim)' }}>AWS S3 (US)</span>,
+            encrypted at rest and in transit.<br />
+            We claim{' '}
+            <span style={{ color: 'var(--text-dim)' }}>no rights</span>{' '}
+            to your work — your IP is yours, always.
+          </p>
+        </div>
       </div>
     </div>
   )

@@ -1,0 +1,105 @@
+import { NextRequest, NextResponse } from 'next/server'
+import Stripe from 'stripe'
+import { createClient } from '@supabase/supabase-js'
+import type { Plan, BillingInterval } from '@/lib/plans'
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2026-03-25.dahlia' })
+
+export async function POST(req: NextRequest) {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
+  if (!serviceKey || !webhookSecret) {
+    return NextResponse.json({ error: 'Not configured' }, { status: 503 })
+  }
+  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey)
+
+  const sig = req.headers.get('stripe-signature')
+  const rawBody = await req.text()
+
+  let event: Stripe.Event
+  try {
+    event = stripe.webhooks.constructEvent(rawBody, sig ?? '', webhookSecret)
+  } catch {
+    return NextResponse.json({ error: 'Webhook signature invalid' }, { status: 400 })
+  }
+
+  switch (event.type) {
+    // ── Checkout completed ──────────────────────────────────────────────────
+    case 'checkout.session.completed': {
+      const session = event.data.object as Stripe.Checkout.Session
+      const userId = session.metadata?.supabase_user_id
+      if (!userId) break
+
+      // Subscription checkout
+      if (session.mode === 'subscription' && session.subscription) {
+        const plan      = session.metadata?.plan     as Plan | undefined
+        const interval  = session.metadata?.interval as BillingInterval | undefined
+        const customerId = session.customer as string
+
+        await admin.from('subscriptions').upsert({
+          user_id: userId,
+          plan: plan ?? 'studio',
+          billing_interval: interval ?? 'monthly',
+          stripe_customer_id: customerId,
+          stripe_subscription_id: session.subscription as string,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' })
+      }
+
+      // Legacy upload one-time payment
+      if (session.mode === 'payment' && session.metadata?.legacy_upload === 'true') {
+        await admin.from('legacy_upload_orders')
+          .update({ status: 'paid', stripe_payment_intent_id: session.payment_intent as string })
+          .eq('user_id', userId)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false })
+          .limit(1)
+      }
+      break
+    }
+
+    // ── Subscription updated (plan change, renewal, etc.) ──────────────────
+    case 'customer.subscription.updated': {
+      const sub = event.data.object as Stripe.Subscription
+      const userId = sub.metadata?.supabase_user_id
+      if (!userId) break
+
+      const plan     = sub.metadata?.plan     as Plan | undefined
+      const interval = sub.metadata?.interval as BillingInterval | undefined
+      const periodEnd = new Date((sub.items.data[0]?.current_period_end ?? 0) * 1000).toISOString()
+
+      await admin.from('subscriptions').upsert({
+        user_id: userId,
+        plan: plan ?? 'studio',
+        billing_interval: interval ?? 'monthly',
+        stripe_subscription_id: sub.id,
+        stripe_customer_id: sub.customer as string,
+        current_period_end: periodEnd,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' })
+      break
+    }
+
+    // ── Subscription cancelled / expired ──────────────────────────────────
+    case 'customer.subscription.deleted': {
+      const sub = event.data.object as Stripe.Subscription
+      const userId = sub.metadata?.supabase_user_id
+      if (!userId) break
+
+      await admin.from('subscriptions').upsert({
+        user_id: userId,
+        plan: 'preserve',
+        billing_interval: null,
+        stripe_subscription_id: null,
+        current_period_end: null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' })
+      break
+    }
+
+    default:
+      break
+  }
+
+  return NextResponse.json({ received: true })
+}

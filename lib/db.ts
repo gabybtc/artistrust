@@ -1,5 +1,7 @@
 import { supabase } from './supabase'
-import type { Artwork, LegalSettings, ProfileSettings, AccessGrant, Tab } from './types'
+import type { Artwork, LegalSettings, ProfileSettings, AccessGrant, Tab, UserSubscription } from './types'
+import type { ExifData } from './extractExif'
+import type { Plan, BillingInterval } from './plans'
 
 // Supabase PostgrestError has non-enumerable props — extract them explicitly.
 function dbErr(label: string, err: unknown): void {
@@ -34,6 +36,10 @@ interface ArtworkRow {
   copyright_holder: string
   copyright_year: string
   copyright_reg_number: string
+  is_public: boolean
+  series: string
+  exif_data: ExifData | null
+  tags: string[]
 }
 
 // ── Serialisation helpers ─────────────────────────────────────────────────────
@@ -60,6 +66,10 @@ function toRow(artwork: Artwork, userId: string): ArtworkRow {
     copyright_holder: artwork.copyrightHolder,
     copyright_year: artwork.copyrightYear,
     copyright_reg_number: artwork.copyrightRegNumber,
+    is_public: artwork.isPublic ?? false,
+    series: artwork.series ?? '',
+    exif_data: artwork.exifData ?? null,
+    tags: artwork.tags ?? [],
   }
 }
 
@@ -85,6 +95,10 @@ function fromRow(row: ArtworkRow): Artwork {
     copyrightHolder: row.copyright_holder ?? '',
     copyrightYear: row.copyright_year ?? '',
     copyrightRegNumber: row.copyright_reg_number ?? '',
+    isPublic: row.is_public ?? false,
+    series: row.series ?? '',
+    exifData: row.exif_data ?? undefined,
+    tags: (row.tags as string[]) ?? [],
   }
 }
 
@@ -123,6 +137,65 @@ export async function upsertArtworks(artworks: Artwork[], userId: string): Promi
     .upsert(syncable.map(a => toRow(a, userId)), { onConflict: 'id' })
 
   if (error) dbErr('upsertArtworks', error)
+}
+
+/** Toggle the is_public flag on a single artwork the authenticated user owns. */
+export async function toggleArtworkPublic(id: string, userId: string, isPublic: boolean): Promise<void> {
+  const { error } = await supabase
+    .from('artworks')
+    .update({ is_public: isPublic })
+    .eq('id', id)
+    .eq('user_id', userId)
+
+  if (error) dbErr('toggleArtworkPublic', error)
+}
+
+/**
+ * Bulk update a set of artworks with a partial patch.
+ * Only fields present (and non-empty string) in `patch` are applied.
+ * The `id`, `imageData`, `uploadedAt`, and `status` fields are excluded for safety.
+ */
+export async function bulkUpdateArtworks(
+  ids: string[],
+  patch: Partial<Artwork>,
+  userId: string,
+): Promise<void> {
+  if (!ids.length) return
+
+  // Build a DB-column patch, omitting identity fields and empty strings.
+  // We allow explicit non-empty strings and booleans through.
+  const dbPatch: Record<string, unknown> = {}
+  const map: Array<[keyof Artwork, string]> = [
+    ['title',              'title'],
+    ['year',               'year'],
+    ['place',              'place'],
+    ['location',           'location'],
+    ['material',           'material'],
+    ['series',             'series'],
+    ['width',              'width'],
+    ['height',             'height'],
+    ['unit',               'unit'],
+    ['mediaType',          'media_type'],
+    ['copyrightHolder',    'copyright_holder'],
+    ['copyrightYear',      'copyright_year'],
+    ['copyrightStatus',    'copyright_status'],
+    ['copyrightRegNumber', 'copyright_reg_number'],
+  ]
+  for (const [jsKey, dbCol] of map) {
+    const v = patch[jsKey]
+    if (typeof v === 'string' && v !== '') dbPatch[dbCol] = v
+  }
+  if (Array.isArray(patch.tags)) dbPatch['tags'] = patch.tags
+
+  if (!Object.keys(dbPatch).length) return
+
+  const { error } = await supabase
+    .from('artworks')
+    .update(dbPatch)
+    .in('id', ids)
+    .eq('user_id', userId)
+
+  if (error) dbErr('bulkUpdateArtworks', error)
 }
 
 export async function deleteArtworkFromDB(id: string, userId: string): Promise<void> {
@@ -254,4 +327,60 @@ export async function saveTabSettings(userId: string, tabs: Tab[]): Promise<void
     .upsert({ user_id: userId, tabs }, { onConflict: 'user_id' })
 
   if (error) dbErr('saveTabSettings', error)
+}
+
+// ── Subscriptions ─────────────────────────────────────────────────────────────
+
+export async function getSubscription(userId: string): Promise<UserSubscription | null> {
+  const { data, error } = await supabase
+    .from('subscriptions')
+    .select('*')
+    .eq('user_id', userId)
+    .single()
+
+  if (error || !data) return null
+
+  // is_beta = true always resolves as beta plan regardless of stored plan column
+  const plan: Plan = data.is_beta ? 'beta' : (data.plan as Plan)
+
+  return {
+    userId: data.user_id,
+    plan,
+    billingInterval: (data.billing_interval as BillingInterval | null) ?? null,
+    stripeCustomerId: data.stripe_customer_id ?? null,
+    stripeSubscriptionId: data.stripe_subscription_id ?? null,
+    currentPeriodEnd: data.current_period_end ?? null,
+    isBeta: data.is_beta,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+  }
+}
+
+export async function upsertSubscription(
+  userId: string,
+  patch: Partial<Omit<UserSubscription, 'userId' | 'createdAt'>>,
+): Promise<void> {
+  const dbPatch: Record<string, unknown> = { user_id: userId, updated_at: new Date().toISOString() }
+  if (patch.plan              !== undefined) dbPatch.plan                  = patch.plan
+  if (patch.billingInterval   !== undefined) dbPatch.billing_interval      = patch.billingInterval
+  if (patch.stripeCustomerId  !== undefined) dbPatch.stripe_customer_id    = patch.stripeCustomerId
+  if (patch.stripeSubscriptionId !== undefined) dbPatch.stripe_subscription_id = patch.stripeSubscriptionId
+  if (patch.currentPeriodEnd  !== undefined) dbPatch.current_period_end    = patch.currentPeriodEnd
+  if (patch.isBeta            !== undefined) dbPatch.is_beta               = patch.isBeta
+
+  const { error } = await supabase
+    .from('subscriptions')
+    .upsert(dbPatch, { onConflict: 'user_id' })
+
+  if (error) dbErr('upsertSubscription', error)
+}
+
+export async function getArtworkCount(userId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('artworks')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+
+  if (error) { dbErr('getArtworkCount', error); return 0 }
+  return count ?? 0
 }

@@ -1,10 +1,17 @@
 "use client"
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { Artwork, Tab } from '@/lib/types'
 import { supabase } from '@/lib/supabase'
-import { fetchArtworks, upsertArtworks, deleteArtworkFromDB, getTabSettings, saveTabSettings, DEFAULT_TABS } from '@/lib/db'
+import { fetchArtworks, upsertArtworks, deleteArtworkFromDB, toggleArtworkPublic, getTabSettings, saveTabSettings, getProfileSettings, DEFAULT_TABS, bulkUpdateArtworks } from '@/lib/db'
+import { useSubscription } from '@/lib/useSubscription'
+import { generatePdfCatalogue } from '@/lib/pdfCatalogue'
+import { planLabel } from '@/lib/plans'
+import CopyrightExportModal from './components/CopyrightExportModal'
+import PricingModal from './components/PricingModal'
+import LegacyUploadModal from './components/LegacyUploadModal'
 import { useUploadQueue } from '@/lib/useUploadQueue'
+import { useUploadDefaults } from '@/lib/useUploadDefaults'
 import ArtworkModal from './components/ArtworkModal'
 import ArtworkCard from './components/ArtworkCard'
 import DropZone from './components/DropZone'
@@ -12,6 +19,9 @@ import AuthModal from './components/AuthModal'
 import LegalModal from './components/LegalModal'
 import ProfileModal from './components/ProfileModal'
 import QueueDrawer from './components/QueueDrawer'
+import BulkEditDrawer from './components/BulkEditDrawer'
+import ColourClusterView from './components/ColourClusterView'
+import UploadDefaultsBar from './components/UploadDefaultsBar'
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null)
@@ -23,13 +33,36 @@ export default function Home() {
   const [editingTabLabel, setEditingTabLabel] = useState('')
   const [filter, setFilter] = useState<'all' | 'complete' | 'pending'>('all')
   const [searchTerm, setSearchTerm] = useState('')
+  const [pricingOpen, setPricingOpen] = useState(false)
+  const [pricingLockedFeature, setPricingLockedFeature] = useState<'copyright' | 'exif' | 'portfolio' | 'pdf' | 'upload_limit' | undefined>()
+  const [legacyUploadOpen, setLegacyUploadOpen] = useState(false)
+  const [pdfGenerating, setPdfGenerating] = useState(false)
+
+  const openPricing = useCallback((feature?: typeof pricingLockedFeature) => {
+    setPricingLockedFeature(feature)
+    setPricingOpen(true)
+  }, [])
+
+  // Subscription — loads after user is known
+  const subscription = useSubscription()
   const [mounted, setMounted] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [legalOpen, setLegalOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [moveToTab, setMoveToTab] = useState<string>('')
+  const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [hoveredTabId, setHoveredTabId] = useState<string | null>(null)
+  const [copyrightGenerating, setCopyrightGenerating] = useState(false)
+  const [copyrightModalOpen, setCopyrightModalOpen] = useState(false)
+  const [copyrightInitialSelected, setCopyrightInitialSelected] = useState<Set<string>>(new Set())
+  const [copyrightArtistName, setCopyrightArtistName] = useState<string>('Artist')
+  const [sortBy, setSortBy] = useState<string>(() =>
+    typeof window !== 'undefined' ? (localStorage.getItem('artistrust_sort') ?? 'uploaded-desc') : 'uploaded-desc'
+  )
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set())
+  const [viewMode, setViewMode] = useState<'grid' | 'cluster'>('grid')
+  const [profileFullName, setProfileFullName] = useState<string | undefined>(undefined)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -39,6 +72,18 @@ export default function Home() {
       setUser(data.session?.user ?? null)
       setMounted(true)
     })
+    // Handle post-Stripe redirect success params
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('billing') === 'success') {
+        showToast('Plan upgraded successfully!')
+        window.history.replaceState({}, '', '/')
+      }
+      if (params.get('legacy') === 'success') {
+        showToast('Legacy upload unlocked — drag your archive in!')
+        window.history.replaceState({}, '', '/')
+      }
+    }
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
     })
@@ -65,6 +110,9 @@ export default function Home() {
         setActiveTab(saved[0].id)
       }
     })
+    getProfileSettings(user.id).then(profile => {
+      if (profile?.fullName) setProfileFullName(profile.fullName)
+    })
   }, [user])
 
   // Debounced sync to DB — only persists artworks that have a real URL (not temp base64)
@@ -82,6 +130,9 @@ export default function Home() {
     toastTimer.current = setTimeout(() => setToast(null), 2400)
   }, [])
 
+  // ── Upload defaults — sticky per-field values for new uploads ────────────
+  const uploadDefaults = useUploadDefaults({ profileFullName })
+
   // ── Upload queue — handles unlimited files, folders, background processing ──
   const onArtworkAdded = useCallback((artwork: Artwork) => {
     setArtworks(prev => [artwork, ...prev])
@@ -96,6 +147,10 @@ export default function Home() {
     activeTab,
     onArtworkAdded,
     onArtworkUpdated,
+    defaults: uploadDefaults.defaults,
+    currentArtworkCount: artworks.length,
+    canUpload: subscription.canUploadMore,
+    onPlanLimit: () => openPricing('upload_limit'),
   })
 
   const handleFiles = useCallback((files: File[]) => {
@@ -116,6 +171,12 @@ export default function Home() {
     setSelected(null)
     if (user) deleteArtworkFromDB(id, user.id)
   }, [user])
+
+  const handleTogglePublic = useCallback((id: string, isPublic: boolean) => {
+    setArtworks(prev => prev.map(a => a.id === id ? { ...a, isPublic } : a))
+    if (selected?.id === id) setSelected(prev => prev ? { ...prev, isPublic } : null)
+    if (user) toggleArtworkPublic(id, user.id, isPublic)
+  }, [user, selected])
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -160,6 +221,40 @@ export default function Home() {
     showToast(`${ids.length} ${ids.length === 1 ? 'work' : 'works'} deleted`)
   }, [selectedIds, user, showToast])
 
+  const handleCopyrightExport = useCallback(async (artworksToExport: Artwork[]) => {
+    if (!user || copyrightGenerating) return
+    setCopyrightGenerating(true)
+    try {
+      const profile = await getProfileSettings(user.id)
+      const name = profile?.fullName
+        || (user.user_metadata?.full_name as string | undefined)
+        || user.email
+        || 'Artist'
+      setCopyrightArtistName(name)
+      setCopyrightInitialSelected(new Set(artworksToExport.map(a => a.id)))
+      setCopyrightModalOpen(true)
+    } finally {
+      setCopyrightGenerating(false)
+    }
+  }, [user, copyrightGenerating])
+
+  const handlePdfExport = useCallback(async () => {
+    if (!user || pdfGenerating) return
+    setPdfGenerating(true)
+    try {
+      const profile = await getProfileSettings(user.id)
+      const blob = await generatePdfCatalogue(artworks, profile)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(profile?.fullName ?? 'archive').replace(/\s+/g, '-').toLowerCase()}-catalogue.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setPdfGenerating(false)
+    }
+  }, [user, artworks, pdfGenerating])
+
   const handleBulkMove = useCallback((targetTabId: string) => {
     const ids = Array.from(selectedIds)
     setArtworks(prev =>
@@ -170,6 +265,15 @@ export default function Home() {
     const label = tabs.find(t => t.id === targetTabId)?.label ?? targetTabId
     showToast(`${ids.length} ${ids.length === 1 ? 'work' : 'works'} moved to ${label}`)
   }, [selectedIds, user, tabs, showToast])
+
+  const handleBulkEdit = useCallback((patch: Partial<Artwork>) => {
+    const ids = Array.from(selectedIds)
+    setArtworks(prev => prev.map(a => selectedIds.has(a.id) ? { ...a, ...patch } : a))
+    if (user) bulkUpdateArtworks(ids, patch, user.id)
+    setSelectedIds(new Set())
+    setBulkEditOpen(false)
+    showToast(`${ids.length} ${ids.length === 1 ? 'work' : 'works'} updated`)
+  }, [selectedIds, user, showToast])
 
   const handleSignOut = useCallback(async () => {
     await supabase.auth.signOut()
@@ -202,7 +306,7 @@ export default function Home() {
     setActiveTab(id)
     setFilter('all')
     setSearchTerm('')
-    // start renaming immediately
+    setActiveTags(new Set())
     setEditingTabLabel('New Tab')
     setEditingTabId(id)
   }, [user])
@@ -233,11 +337,44 @@ export default function Home() {
         a.place?.toLowerCase().includes(q) ||
         a.aiAnalysis?.style?.toLowerCase().includes(q) ||
         a.aiAnalysis?.medium?.toLowerCase().includes(q) ||
-        a.aiAnalysis?.subject?.toLowerCase().includes(q)
+        a.aiAnalysis?.subject?.toLowerCase().includes(q) ||
+        a.tags?.some(t => t.toLowerCase().includes(q))
       )
     }
     return true
   })
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered]
+    switch (sortBy) {
+      case 'year-asc':    return arr.sort((a, b) => (a.year || '0').localeCompare(b.year || '0'))
+      case 'year-desc':   return arr.sort((a, b) => (b.year || '0').localeCompare(a.year || '0'))
+      case 'title-asc':   return arr.sort((a, b) => (a.title || '').localeCompare(b.title || ''))
+      case 'title-desc':  return arr.sort((a, b) => (b.title || '').localeCompare(a.title || ''))
+      case 'medium':      return arr.sort((a, b) => (a.material || '').localeCompare(b.material || ''))
+      default:            return arr // uploaded-desc (already ordered by fetchArtworks)
+    }
+  }, [filtered, sortBy])
+
+  // Tag filter strip — top 30 tags by frequency across sorted artworks
+  const availableTags = useMemo(() => {
+    const freq = new Map<string, number>()
+    for (const a of sorted) {
+      for (const t of a.tags ?? []) {
+        freq.set(t, (freq.get(t) ?? 0) + 1)
+      }
+    }
+    return [...freq.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 30)
+      .map(([tag]) => tag)
+  }, [sorted])
+
+  const tagFiltered = useMemo(() =>
+    activeTags.size === 0
+      ? sorted
+      : sorted.filter(a => [...activeTags].every(t => a.tags?.includes(t)))
+  , [sorted, activeTags])
 
   const tabArtworks = artworks.filter(a => (a.mediaType ?? tabs[0].id) === activeTab)
 
@@ -247,9 +384,20 @@ export default function Home() {
     withStory: tabArtworks.filter(a => a.voiceMemo).length,
   }
 
+  // Derive unique suggestion lists from the full catalogue — used by SmartInput
+  // fields in ArtworkModal and BulkEditDrawer. Sorted and deduped, empty strings excluded.
+  const suggestions = {
+    years:     [...new Set(artworks.map(a => a.year).filter(Boolean))].sort().reverse(),
+    places:    [...new Set(artworks.map(a => a.place).filter(Boolean))].sort(),
+    locations: [...new Set(artworks.map(a => a.location).filter(Boolean))].sort(),
+    materials: [...new Set(artworks.map(a => a.material).filter(Boolean))].sort(),
+    series:    [...new Set(artworks.map(a => a.series).filter((s): s is string => !!s))].sort(),
+    allTags:   [...new Set(artworks.flatMap(a => a.tags ?? []))].sort(),
+  }
+
   return (
     <>
-      <main style={{ minHeight: '100vh', background: 'var(--bg)' }}>
+      <main style={{ minHeight: '100vh', background: 'var(--bg)', paddingBottom: 44 }}>
 
         {/* ── Header ── */}
         <header style={{
@@ -341,6 +489,97 @@ export default function Home() {
                         : user.email?.[0]?.toUpperCase() ?? '?'
                     })()}
                   </button>
+                  <button
+                    onClick={() => handleCopyrightExport(artworks)}
+                    disabled={copyrightGenerating || artworks.length === 0}
+                    title="Download copyright registration package"
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid var(--border)',
+                      borderRadius: 2, padding: '5px 14px',
+                      color: copyrightGenerating ? 'var(--accent)' : 'var(--text-dim)',
+                      fontFamily: 'var(--font-body)',
+                      fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
+                      cursor: copyrightGenerating || artworks.length === 0 ? 'default' : 'pointer',
+                      transition: 'all 0.18s',
+                      display: 'flex', alignItems: 'center', gap: 7,
+                      opacity: artworks.length === 0 ? 0.4 : 1,
+                    }}
+                    onMouseEnter={e => {
+                      if (copyrightGenerating || artworks.length === 0) return
+                      e.currentTarget.style.borderColor = 'var(--accent-dim)'
+                      e.currentTarget.style.color = 'var(--accent)'
+                    }}
+                    onMouseLeave={e => {
+                      if (copyrightGenerating) return
+                      e.currentTarget.style.borderColor = 'var(--border)'
+                      e.currentTarget.style.color = 'var(--text-dim)'
+                    }}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                      <circle cx="5.5" cy="5.5" r="4.5" stroke="currentColor" strokeWidth="1"/>
+                      <path d="M7 4.2C6.6 3.7 6.1 3.4 5.5 3.4c-1.2 0-2.1 1-2.1 2.1s.9 2.1 2.1 2.1c.6 0 1.1-.3 1.5-.8" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round"/>
+                    </svg>
+                    {copyrightGenerating ? 'Generating…' : 'Copyright'}
+                  </button>
+                  {subscription.canExportPdf && (
+                    <button
+                      onClick={handlePdfExport}
+                      disabled={pdfGenerating || artworks.length === 0}
+                      title="Export PDF catalogue"
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid var(--border)',
+                        borderRadius: 2, padding: '5px 14px',
+                        color: pdfGenerating ? 'var(--accent)' : 'var(--text-dim)',
+                        fontFamily: 'var(--font-body)',
+                        fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
+                        cursor: pdfGenerating || artworks.length === 0 ? 'default' : 'pointer',
+                        transition: 'all 0.18s',
+                        opacity: artworks.length === 0 ? 0.4 : 1,
+                      }}
+                      onMouseEnter={e => {
+                        if (pdfGenerating || artworks.length === 0) return
+                        e.currentTarget.style.borderColor = 'var(--accent-dim)'
+                        e.currentTarget.style.color = 'var(--accent)'
+                      }}
+                      onMouseLeave={e => {
+                        if (pdfGenerating) return
+                        e.currentTarget.style.borderColor = 'var(--border)'
+                        e.currentTarget.style.color = 'var(--text-dim)'
+                      }}
+                    >
+                      {pdfGenerating ? 'Generating…' : 'PDF Catalogue'}
+                    </button>
+                  )}
+                  {!subscription.loading && process.env.NEXT_PUBLIC_BILLING_ENABLED === 'true' && (
+                    <button
+                      onClick={() => openPricing()}
+                      title="View plans & upgrade"
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid var(--border)',
+                        borderRadius: 2, padding: '4px 10px',
+                        fontFamily: 'var(--font-body)',
+                        fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
+                        color: subscription.subscription?.plan === 'beta' ? 'var(--accent)' : 'var(--text-dim)',
+                        cursor: 'pointer', transition: 'all 0.18s',
+                        display: 'flex', alignItems: 'center', gap: 5,
+                      }}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.borderColor = 'var(--accent-dim)'
+                        e.currentTarget.style.color = 'var(--accent)'
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.borderColor = 'var(--border)'
+                        e.currentTarget.style.color = subscription.subscription?.plan === 'beta' ? 'var(--accent)' : 'var(--text-dim)'
+                      }}
+                    >
+                      {planLabel(subscription.subscription?.plan ?? 'preserve')}
+                      <span style={{ opacity: 0.45 }}>·</span>
+                      <span style={{ color: 'var(--accent-dim)' }}>Plans</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => setLegalOpen(true)}
                     style={{
@@ -441,7 +680,7 @@ export default function Home() {
                   />
                 ) : (
                   <button
-                    onClick={() => { setActiveTab(tab.id); setFilter('all'); setSearchTerm('') }}
+                    onClick={() => { setActiveTab(tab.id); setFilter('all'); setSearchTerm(''); setActiveTags(new Set()) }}
                     onDoubleClick={() => { setEditingTabLabel(tab.label); setEditingTabId(tab.id) }}
                     title="Double-click to rename"
                     style={{
@@ -538,9 +777,19 @@ export default function Home() {
 
           {/* Drop zone */}
           <div style={{ marginBottom: 32 }}>
+            {user && (
+              <UploadDefaultsBar
+                defaults={uploadDefaults.defaults}
+                suggestions={suggestions}
+                onSet={uploadDefaults.setDefault}
+                onClear={uploadDefaults.clearDefault}
+              />
+            )}
             <DropZone
               onFiles={handleFiles}
               label={activeTab === 'photography' ? 'Drag photographs & scans here' : `Drag ${tabs.find(t => t.id === activeTab)?.label.toLowerCase() ?? 'works'} here`}
+              onLegacyUpload={user ? () => setLegacyUploadOpen(true) : undefined}
+              showLegacyLimit={!!user && !subscription.loading && !subscription.hasFreeLegacyUpload}
             />
           </div>
 
@@ -609,11 +858,81 @@ export default function Home() {
                 </div>
               </div>
 
-              <span style={{
-                fontSize: 12, color: 'var(--text-dim)', letterSpacing: '0.06em',
-              }}>
-                {filtered.length} {filtered.length === 1 ? 'work' : 'works'}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {/* Sort — only shown at 10+ works */}
+                {tabArtworks.length >= 10 && (
+                  <select
+                    value={sortBy}
+                    onChange={e => {
+                      setSortBy(e.target.value)
+                      localStorage.setItem('artistrust_sort', e.target.value)
+                    }}
+                    style={{
+                      background: 'var(--surface)', border: '1px solid var(--border)',
+                      borderRadius: 2, padding: '5px 28px 5px 10px',
+                      color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+                      fontSize: 11, letterSpacing: '0.08em', cursor: 'pointer',
+                      outline: 'none',
+                      appearance: 'none',
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23555' strokeWidth='1.2' fill='none' strokeLinecap='round'/%3E%3C/svg%3E")`,
+                      backgroundRepeat: 'no-repeat',
+                      backgroundPosition: 'right 8px center',
+                    }}
+                  >
+                    <option value="uploaded-desc">Newest first</option>
+                    <option value="year-desc">Year ↓</option>
+                    <option value="year-asc">Year ↑</option>
+                    <option value="title-asc">Title A–Z</option>
+                    <option value="title-desc">Title Z–A</option>
+                    <option value="medium">By medium</option>
+                  </select>
+                )}
+
+                <span style={{
+                  fontSize: 12, color: 'var(--text-dim)', letterSpacing: '0.06em',
+                }}>
+                  {filtered.length} {filtered.length === 1 ? 'work' : 'works'}
+                </span>
+
+                {/* View mode toggle — grid / colour wheel */}
+                {tabArtworks.length > 0 && (
+                  <div style={{ display: 'flex', gap: 2 }}>
+                    {(['grid', 'cluster'] as const).map(mode => (
+                      <button
+                        key={mode}
+                        title={mode === 'grid' ? 'Grid view' : 'Colour wheel'}
+                        onClick={() => setViewMode(mode)}
+                        style={{
+                          width: 28, height: 28,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: viewMode === mode ? 'rgba(201,169,110,0.1)' : 'transparent',
+                          border: `1px solid ${viewMode === mode ? 'var(--accent-dim)' : 'var(--border)'}`,
+                          borderRadius: 2, cursor: 'pointer',
+                          color: viewMode === mode ? 'var(--accent)' : 'var(--text-dim)',
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        {mode === 'grid' ? (
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                            <rect x="0.5" y="0.5" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
+                            <rect x="7" y="0.5" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
+                            <rect x="0.5" y="7" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
+                            <rect x="7" y="7" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
+                          </svg>
+                        ) : (
+                          <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                            <circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" strokeWidth="1"/>
+                            <circle cx="6.5" cy="6.5" r="2" fill="currentColor" opacity="0.3"/>
+                            <line x1="6.5" y1="1" x2="6.5" y2="4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                            <line x1="11" y1="8.5" x2="8.4" y2="7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                            <line x1="2" y1="8.5" x2="4.6" y2="7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                          </svg>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -680,6 +999,60 @@ export default function Home() {
               )}
 
               <button
+                onClick={() => setBulkEditOpen(true)}
+                style={{
+                  background: 'transparent', border: '1px solid var(--border)',
+                  borderRadius: 2, padding: '5px 14px',
+                  color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+                  fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  cursor: 'pointer', transition: 'all 0.18s',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.borderColor = 'var(--accent-dim)'
+                  e.currentTarget.style.color = 'var(--accent)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.borderColor = 'var(--border)'
+                  e.currentTarget.style.color = 'var(--text-dim)'
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                  <path d="M1 8.5V10h1.5l5-5L6 3.5l-5 5zM9.85 2.15a1 1 0 000-1.42L8.7.57a1 1 0 00-1.42 0L6.3 1.5 8.8 4l1.05-1.05" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Edit
+              </button>
+
+              <button
+                onClick={() => handleCopyrightExport(artworks.filter(a => selectedIds.has(a.id)))}
+                disabled={copyrightGenerating}
+                style={{
+                  background: 'transparent', border: '1px solid var(--accent-dim)',
+                  borderRadius: 2, padding: '5px 14px',
+                  color: copyrightGenerating ? 'var(--accent)' : 'var(--accent)',
+                  fontFamily: 'var(--font-body)',
+                  fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  cursor: copyrightGenerating ? 'default' : 'pointer',
+                  transition: 'all 0.18s',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  opacity: copyrightGenerating ? 0.6 : 1,
+                }}
+                onMouseEnter={e => {
+                  if (copyrightGenerating) return
+                  e.currentTarget.style.background = 'rgba(201,169,110,0.12)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'transparent'
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                  <circle cx="5.5" cy="5.5" r="4.5" stroke="currentColor" strokeWidth="1"/>
+                  <path d="M7 4.2C6.6 3.7 6.1 3.4 5.5 3.4c-1.2 0-2.1 1-2.1 2.1s.9 2.1 2.1 2.1c.6 0 1.1-.3 1.5-.8" stroke="currentColor" strokeWidth="0.9" strokeLinecap="round"/>
+                </svg>
+                {copyrightGenerating ? 'Generating…' : 'Export'}
+              </button>
+
+              <button
                 onClick={handleBulkDelete}
                 style={{
                   background: 'transparent', border: '1px solid #e05a5a',
@@ -717,14 +1090,77 @@ export default function Home() {
             </div>
           )}
 
-          {/* Grid */}
-          {filtered.length > 0 ? (
+          {/* Tag filter strip — appears when any tags exist in this view */}
+          {availableTags.length > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              overflowX: 'auto', paddingBottom: 2,
+              marginBottom: 18,
+              scrollbarWidth: 'none',
+            }}>
+              {activeTags.size > 0 && (
+                <button
+                  onClick={() => setActiveTags(new Set())}
+                  style={{
+                    flexShrink: 0,
+                    background: 'transparent',
+                    border: '1px solid var(--border)',
+                    borderRadius: 2, padding: '4px 10px',
+                    color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+                    fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
+                    cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+              {availableTags.map(tag => {
+                const ns = tag.split(':')[0]
+                const val = tag.slice(tag.indexOf(':') + 1)
+                const nsColours: Record<string, string> = {
+                  medium: 'var(--accent)', subject: '#7eb8ff', content: '#aaaaaa',
+                  mood: '#c9a896', style: '#8ecfb0', colour: '#b8a9ff',
+                  camera: 'var(--text-dim)', lens: 'var(--text-dim)', aperture: 'var(--text-dim)',
+                }
+                const colour = nsColours[ns] ?? '#aaaaaa'
+                const isActive = activeTags.has(tag)
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => setActiveTags(prev => {
+                      const next = new Set(prev)
+                      isActive ? next.delete(tag) : next.add(tag)
+                      return next
+                    })}
+                    style={{
+                      flexShrink: 0,
+                      background: isActive ? `color-mix(in srgb, ${colour} 15%, transparent)` : 'transparent',
+                      border: `1px solid ${isActive ? `color-mix(in srgb, ${colour} 40%, transparent)` : 'var(--border)'}`,
+                      borderRadius: 2, padding: '4px 10px',
+                      color: isActive ? colour : 'var(--text-dim)',
+                      fontFamily: 'var(--font-body)',
+                      fontSize: 11, letterSpacing: '0.04em',
+                      cursor: 'pointer', whiteSpace: 'nowrap',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    <span style={{ opacity: 0.55, marginRight: 3, fontSize: 10 }}>{ns}</span>{val}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Grid / Cluster */}
+          {viewMode === 'cluster' ? (
+            <ColourClusterView artworks={tagFiltered} onSelect={setSelected} />
+          ) : tagFiltered.length > 0 ? (
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))',
               gap: 18,
             }}>
-              {filtered.map(artwork => (
+              {tagFiltered.map(artwork => (
                 <ArtworkCard
                   key={artwork.id}
                   artwork={artwork}
@@ -768,10 +1204,15 @@ export default function Home() {
           <ArtworkModal
             artwork={selected}
             tabs={tabs}
+            suggestions={suggestions}
             onClose={() => setSelected(null)}
             onUpdate={(updates) => handleUpdate(selected.id, updates)}
             onDelete={() => handleDelete(selected.id)}
             onSaved={() => showToast('Saved to catalogue')}
+            onTogglePublic={(isPublic) => handleTogglePublic(selected.id, isPublic)}
+            onSetDefault={uploadDefaults.setDefault}
+            canSharePortfolio={subscription.canSharePortfolio}
+            onUpgradeClick={() => openPricing('portfolio')}
           />
         )}
 
@@ -781,6 +1222,18 @@ export default function Home() {
         </div>
 
       </main>
+
+      {/* Copyright Export Modal */}
+      {copyrightModalOpen && (
+        <CopyrightExportModal
+          artworks={artworks}
+          initialSelected={copyrightInitialSelected}
+          artistName={copyrightArtistName}
+          onClose={() => setCopyrightModalOpen(false)}
+          plan={subscription.subscription?.plan ?? 'preserve'}
+          onUpgradeClick={() => openPricing('copyright')}
+        />
+      )}
 
       {/* Legal Modal */}
       {legalOpen && user && (
@@ -801,6 +1254,16 @@ export default function Home() {
         />
       )}
 
+      {/* Bulk edit drawer */}
+      {bulkEditOpen && selectedIds.size > 0 && (
+        <BulkEditDrawer
+          selectedArtworks={artworks.filter(a => selectedIds.has(a.id))}
+          suggestions={suggestions}
+          onApply={handleBulkEdit}
+          onClose={() => setBulkEditOpen(false)}
+        />
+      )}
+
       {/* Upload queue progress drawer */}
       <QueueDrawer
         items={uploadQueue.items}
@@ -813,6 +1276,82 @@ export default function Home() {
         onClearDone={uploadQueue.clearDone}
         onClose={() => uploadQueue.setVisible(false)}
       />
+
+      {/* Data trust footer */}
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        zIndex: 10,
+        height: 36,
+        background: 'rgba(10,10,10,0.97)',
+        borderTop: '1px solid var(--border)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        gap: 24,
+        pointerEvents: 'none',
+      }}>
+        {[
+          {
+            text: 'Encrypted at rest & in transit',
+            icon: (
+              <svg width="10" height="11" viewBox="0 0 10 11" fill="none">
+                <rect x="1" y="4.5" width="8" height="6" rx="1" stroke="currentColor" strokeWidth="0.9"/>
+                <path d="M3 4.5V3a2 2 0 014 0v1.5" stroke="currentColor" strokeWidth="0.9"/>
+              </svg>
+            ),
+          },
+          {
+            text: 'Stored on AWS S3 · US infrastructure',
+            icon: (
+              <svg width="12" height="10" viewBox="0 0 12 10" fill="none">
+                <path d="M1 7c0-1.1.9-2 2-2h.2A3 3 0 019.8 5H10a2 2 0 010 4H3a2 2 0 01-2-2z" stroke="currentColor" strokeWidth="0.9"/>
+              </svg>
+            ),
+          },
+          {
+            text: 'Your work, your rights — we claim nothing',
+            icon: (
+              <svg width="11" height="10" viewBox="0 0 11 10" fill="none">
+                <path d="M5.5 1l1.1 2.3 2.5.4-1.8 1.7.4 2.5L5.5 6.8 3.3 7.9l.4-2.5L2 3.7l2.5-.4z" stroke="currentColor" strokeWidth="0.85" strokeLinejoin="round"/>
+              </svg>
+            ),
+          },
+        ].map(({ icon, text }, i) => (
+          <span key={i} style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            fontSize: 10, letterSpacing: '0.07em',
+            color: 'var(--muted)', fontFamily: 'var(--font-body)',
+          }}>
+            <span style={{ color: 'var(--accent-dim)', display: 'flex', alignItems: 'center' }}>
+              {icon}
+            </span>
+            {text}
+          </span>
+        ))}
+      </div>
+
+      {pricingOpen && process.env.NEXT_PUBLIC_BILLING_ENABLED === 'true' && (
+        <PricingModal
+          onClose={() => setPricingOpen(false)}
+          onUpgrade={(plan, interval) => {
+            setPricingOpen(false)
+            subscription.openCheckout(plan, interval)
+          }}
+          lockedFeature={pricingLockedFeature}
+          currentPlan={subscription.subscription?.plan ?? 'preserve'}
+          onManageBilling={subscription.subscription?.stripeSubscriptionId ? () => { setPricingOpen(false); subscription.openPortal() } : undefined}
+        />
+      )}
+
+      {legacyUploadOpen && process.env.NEXT_PUBLIC_BILLING_ENABLED === 'true' && (
+        <LegacyUploadModal
+          plan={subscription.subscription?.plan ?? 'preserve'}
+          billingInterval={subscription.subscription?.billingInterval ?? null}
+          onClose={() => setLegacyUploadOpen(false)}
+          onUnlocked={() => {
+            setLegacyUploadOpen(false)
+            showToast('Legacy upload unlocked — drag your archive in!')
+          }}
+        />
+      )}
 
       {/* Auth gate — shown when not signed in */}
       {mounted && !user && (
