@@ -9,8 +9,7 @@ import {
   canViewExif,
   canSharePortfolio,
   canExportPdf,
-  hasFreeLegacyUpload,
-  getLegacyUploadFee,
+  getMonthlyUploadLimit,
 } from './plans'
 
 const BILLING_ENABLED = process.env.NEXT_PUBLIC_BILLING_ENABLED === 'true'
@@ -20,14 +19,14 @@ interface UseSubscriptionResult {
   loading: boolean
   refresh: () => void
   // Permission helpers baked into the hook for convenience
-  canUploadMore: (currentCount: number) => boolean
+  canUploadMore: (monthlyCount: number) => boolean
   canExportCopyright: boolean
   canViewExif: boolean
   canSharePortfolio: boolean
   canExportPdf: boolean
-  hasFreeLegacyUpload: boolean
-  getLegacyUploadFee: (workCount: number) => { cents: number; tier: string }
-  openCheckout: (plan: 'studio' | 'archive', interval: 'monthly' | 'annual') => Promise<void>
+  /** Monthly upload limit for this plan (null = unlimited) */
+  monthlyUploadLimit: number | null
+  openCheckout: (plan: 'studio' | 'archive' | 'preserve', interval: 'monthly' | 'annual') => Promise<void>
   openPortal: () => Promise<void>
 }
 
@@ -54,8 +53,7 @@ const BILLING_DISABLED_RESULT: UseSubscriptionResult = {
   canViewExif: true,
   canSharePortfolio: true,
   canExportPdf: true,
-  hasFreeLegacyUpload: true,
-  getLegacyUploadFee: () => ({ cents: 0, tier: 'free' }),
+  monthlyUploadLimit: null,
   openCheckout: NOOP,
   openPortal: NOOP,
 }
@@ -97,11 +95,11 @@ export function useSubscription(): UseSubscriptionResult {
   const interval = subscription?.billingInterval ?? null
 
   const openCheckout = async (
-    targetPlan: 'studio' | 'archive',
+    targetPlan: 'studio' | 'archive' | 'preserve',
     targetInterval: 'monthly' | 'annual',
   ) => {
     const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
+    if (!session) throw new Error('Not authenticated')
     const res = await fetch('/api/billing/checkout', {
       method: 'POST',
       headers: {
@@ -110,23 +108,31 @@ export function useSubscription(): UseSubscriptionResult {
       },
       body: JSON.stringify({ type: 'subscription', plan: targetPlan, interval: targetInterval }),
     })
-    if (res.ok) {
-      const { url } = await res.json()
-      if (url) window.location.href = url
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error((data as { error?: string }).error ?? 'Plan change failed')
+    }
+    const data = await res.json()
+    if (data.url) {
+      window.location.href = data.url
+    } else if (data.updated) {
+      await fetchSub()
     }
   }
 
   const openPortal = async () => {
     const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
+    if (!session) throw new Error('Not authenticated')
     const res = await fetch('/api/billing/portal', {
       method: 'POST',
       headers: { Authorization: `Bearer ${session.access_token}` },
     })
-    if (res.ok) {
-      const { url } = await res.json()
-      if (url) window.location.href = url
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error((data as { error?: string }).error ?? 'Could not open billing portal')
     }
+    const { url } = await res.json()
+    if (url) window.location.href = url
   }
 
   return {
@@ -138,8 +144,7 @@ export function useSubscription(): UseSubscriptionResult {
     canViewExif: canViewExif(plan),
     canSharePortfolio: canSharePortfolio(plan),
     canExportPdf: canExportPdf(plan),
-    hasFreeLegacyUpload: hasFreeLegacyUpload(plan, interval),
-    getLegacyUploadFee: (workCount: number) => getLegacyUploadFee(workCount, plan, interval),
+    monthlyUploadLimit: getMonthlyUploadLimit(plan),
     openCheckout,
     openPortal,
   }

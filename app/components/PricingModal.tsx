@@ -8,7 +8,7 @@ const PLAN_RANK: Record<Plan, number> = { preserve: 0, studio: 1, archive: 2, be
 
 interface Props {
   onClose: () => void
-  onUpgrade: (plan: 'studio' | 'archive', interval: 'monthly' | 'annual') => void
+  onUpgrade: (plan: 'studio' | 'archive' | 'preserve', interval: 'monthly' | 'annual') => void
   /** Highlight a specific locked feature to show context-aware messaging */
   lockedFeature?: 'copyright' | 'exif' | 'portfolio' | 'pdf' | 'upload_limit'
   /** Currently active plan — used to show upgrade/downgrade/current labels */
@@ -91,7 +91,7 @@ export default function PricingModal({ onClose, onUpgrade, lockedFeature, curren
             fontSize: 13, color: 'var(--text-dim)',
             fontFamily: 'var(--font-body)', marginBottom: 28,
           }}>
-            Save 20% with an annual plan — free legacy upload included.
+            Save 20% with an annual plan.
           </p>
 
           {/* Monthly / Annual toggle */}
@@ -219,24 +219,6 @@ export default function PricingModal({ onClose, onUpgrade, lockedFeature, curren
                   </p>
                 )}
 
-                {interval === 'annual' && isPaid && (
-                  <div style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5,
-                    background: 'rgba(201,169,110,0.1)',
-                    border: '1px solid var(--accent-dim)',
-                    borderRadius: 2, padding: '3px 9px',
-                    marginBottom: 16,
-                  }}>
-                    <span style={{ color: 'var(--accent)', fontSize: 10 }}>✓</span>
-                    <span style={{
-                      fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
-                      color: 'var(--accent)', fontFamily: 'var(--font-body)',
-                    }}>
-                      Free legacy upload included
-                    </span>
-                  </div>
-                )}
-
                 {/* CTA button */}
                 {(() => {
                   const isCurrent = planKey === currentPlan
@@ -258,7 +240,7 @@ export default function PricingModal({ onClose, onUpgrade, lockedFeature, curren
                           </div>
                         ) : planKey === 'preserve' ? (
                           <button
-                            onClick={() => onManageBilling ? onManageBilling() : onClose()}
+                            onClick={() => onUpgrade('preserve', interval)}
                             style={{
                               width: '100%',
                               background: 'transparent',
@@ -333,75 +315,6 @@ export default function PricingModal({ onClose, onUpgrade, lockedFeature, curren
           })}
         </div>
 
-        {/* Legacy upload banner */}
-        <div style={{
-          borderTop: '1px solid var(--border)',
-          padding: '32px 48px',
-          display: 'grid',
-          gridTemplateColumns: '1fr auto',
-          gap: 40, alignItems: 'center',
-        }}>
-          <div>
-            <h4 style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 17, fontWeight: 400, fontStyle: 'italic',
-              color: 'var(--text)', marginBottom: 10,
-            }}>
-              Bringing a legacy archive?
-            </h4>
-            <p style={{
-              fontSize: 12, color: 'var(--text-dim)',
-              fontFamily: 'var(--font-body)', lineHeight: 1.6,
-            }}>
-              {interval === 'annual'
-                ? 'Annual subscribers get a free legacy upload — bulk-import your entire back-catalog at no extra cost. Monthly subscribers pay a small one-time fee for batches over 50 works.'
-                : 'Already have a large back-catalog? Existing subscribers can perform a Legacy Upload directly through their account. A one-time fee applies for bulk imports over 50 works. Switch to annual and it\'s included free.'}
-            </p>
-          </div>
-
-          {/* Legacy pricing tiers */}
-          <div style={{ display: 'flex', gap: 0, flexShrink: 0 }}>
-            {[
-              { label: '1–50 Works', price: interval === 'annual' ? 'Free' : 'Free',  sub: interval === 'annual' ? 'always free' : null },
-              { label: '51–200',     price: interval === 'annual' ? 'Free' : '$15',   sub: interval === 'annual' ? 'annual plan' : null },
-              { label: '201–500',    price: interval === 'annual' ? 'Free' : '$29',   sub: interval === 'annual' ? 'annual plan' : null },
-              { label: '501+',       price: interval === 'annual' ? 'Free' : '$0.10', sub: interval === 'annual' ? 'annual plan' : 'per upload' },
-            ].map((tier, i, arr) => (
-              <div key={tier.label} style={{
-                padding: '16px 20px',
-                textAlign: 'center',
-                borderTop: '1px solid var(--border)',
-                borderBottom: '1px solid var(--border)',
-                borderLeft: '1px solid var(--border)',
-                borderRight: i === arr.length - 1 ? '1px solid var(--border)' : undefined,
-                minWidth: 90,
-                background: interval === 'annual' && i > 0 ? 'rgba(201,169,110,0.04)' : 'transparent',
-                transition: 'background 0.2s',
-              }}>
-                <p style={{
-                  fontSize: 9, letterSpacing: '0.18em', textTransform: 'uppercase',
-                  color: 'var(--text-dim)', fontFamily: 'var(--font-body)', marginBottom: 6,
-                }}>
-                  {tier.label}
-                </p>
-                <p style={{
-                  fontFamily: 'var(--font-display)',
-                  fontSize: 20, fontWeight: 400,
-                  color: (i === 0 || interval === 'annual') ? 'var(--accent)' : 'var(--text)',
-                  fontStyle: (i === 0 || interval === 'annual') ? 'italic' : undefined,
-                }}>
-                  {tier.price}
-                </p>
-                {tier.sub && (
-                  <p style={{ fontSize: 9, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', marginTop: 2 }}>
-                    {tier.sub}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
         {/* Footer note */}
         <div style={{
           borderTop: '1px solid var(--border)',
@@ -412,7 +325,7 @@ export default function PricingModal({ onClose, onUpgrade, lockedFeature, curren
             fontSize: 11, color: 'var(--text-dim)',
             fontFamily: 'var(--font-body)', letterSpacing: '0.04em', margin: 0,
           }}>
-            Annual plans include a 20% discount and a free legacy upload for your entire archive.
+            Annual plans include a 20% discount. Additional uploads beyond your monthly limit are $0.05 each.
           </p>
           {onManageBilling && (
             <button

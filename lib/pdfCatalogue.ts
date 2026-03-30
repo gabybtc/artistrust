@@ -3,14 +3,43 @@ import autoTable from 'jspdf-autotable'
 import type { Artwork } from './types'
 import type { ProfileSettings } from './types'
 
-/**
- * Generate a PDF catalogue for the user's artwork archive.
- * Formatted as a printable table with title, year, medium, dimensions, and copyright.
- */
+// ── Thumbnail loader ──────────────────────────────────────────────────────────
+// Loads any image src (data URL or remote URL) into a canvas and returns a
+// compact JPEG data URL suitable for embedding in jsPDF.
+async function toJpegDataUrl(src: string, maxPx = 160): Promise<string | null> {
+  if (!src) return null
+  return new Promise(resolve => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxPx / Math.max(img.naturalWidth || 1, img.naturalHeight || 1))
+        const w = Math.max(1, Math.round(img.naturalWidth * scale))
+        const h = Math.max(1, Math.round(img.naturalHeight * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) { resolve(null); return }
+        ctx.drawImage(img, 0, 0, w, h)
+        resolve(canvas.toDataURL('image/jpeg', 0.78))
+      } catch {
+        resolve(null)
+      }
+    }
+    img.onerror = () => resolve(null)
+    img.src = src
+  })
+}
+
+// ── PDF generator ─────────────────────────────────────────────────────────────
 export async function generatePdfCatalogue(
   artworks: Artwork[],
   profile: ProfileSettings | null,
 ): Promise<Blob> {
+  // Load all thumbnails before building the PDF (parallel fetch)
+  const thumbs = await Promise.all(artworks.map(a => toJpegDataUrl(a.imageData)))
+
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
 
   const artistName = profile?.fullName ?? 'Artist'
@@ -18,9 +47,12 @@ export async function generatePdfCatalogue(
   const now = new Date()
   const dateStr = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 
-  // ── Cover header ──────────────────────────────────────────────────────────
-  const accentRgb = [201, 169, 110] as [number, number, number]
-  doc.setFillColor(24, 24, 24)
+  // Print-safe gold — dark enough to read on white
+  const accentRgb = [148, 112, 48] as [number, number, number]
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  // White page (no fill needed — jsPDF default is white, but be explicit)
+  doc.setFillColor(255, 255, 255)
   doc.rect(0, 0, 210, 297, 'F')
 
   doc.setTextColor(...accentRgb)
@@ -31,30 +63,33 @@ export async function generatePdfCatalogue(
   if (studioName) {
     doc.setFontSize(9)
     doc.setFont('helvetica', 'normal')
-    doc.setTextColor(160, 140, 100)
+    doc.setTextColor(130, 100, 50)
     doc.text(studioName.toUpperCase(), 20, 36)
   }
 
-  doc.setFontSize(9)
+  doc.setFontSize(8)
   doc.setFont('helvetica', 'normal')
-  doc.setTextColor(120, 110, 90)
-  doc.text(`Catalogue · ${artworks.length} works · Generated ${dateStr}`, 20, 44)
+  doc.setTextColor(110, 98, 78)
+  doc.text(`Catalogue · ${artworks.length} works · ${dateStr}`, 20, studioName ? 44 : 36)
 
-  // Separator line
+  const separatorY = studioName ? 48 : 40
   doc.setDrawColor(...accentRgb)
   doc.setLineWidth(0.3)
-  doc.line(20, 48, 190, 48)
+  doc.line(20, separatorY, 190, separatorY)
 
   // ── Table ─────────────────────────────────────────────────────────────────
-  const rows = artworks.map((a, idx) => {
+  const THUMB_W = 18   // mm
+  const THUMB_H = 18   // mm
+  const ROW_H   = 20   // mm — enough for the thumbnail
+
+  const rows = artworks.map(a => {
     const dims = a.width && a.height ? `${a.width} × ${a.height} ${a.unit}` : '—'
     const medium = a.material || a.aiAnalysis?.medium || '—'
     const copyright = a.copyrightStatus === 'registered'
       ? `© ${a.copyrightYear} ${a.copyrightHolder} (Reg. ${a.copyrightRegNumber || 'N/A'})`
-      : `© ${a.copyrightYear} ${a.copyrightHolder}`
-
+      : `© ${a.copyrightYear || ''} ${a.copyrightHolder || ''}`
     return [
-      String(idx + 1),
+      '',   // thumbnail slot — filled via didDrawCell
       a.title || a.aiAnalysis?.suggestedTitle || 'Untitled',
       a.year || '—',
       medium,
@@ -64,48 +99,67 @@ export async function generatePdfCatalogue(
   })
 
   autoTable(doc, {
-    startY: 54,
-    head: [['#', 'Title', 'Year', 'Medium', 'Dimensions', 'Copyright']],
+    startY: separatorY + 4,
+    head: [['', 'Title', 'Year', 'Medium', 'Dimensions', 'Copyright']],
     body: rows,
     theme: 'plain',
     headStyles: {
-      fillColor: [30, 28, 24],
+      fillColor: [244, 240, 232],
       textColor: accentRgb,
-      fontStyle: 'normal',
+      fontStyle: 'bold',
       fontSize: 7,
-      cellPadding: { top: 4, right: 4, bottom: 4, left: 4 },
+      cellPadding: { top: 3, right: 3, bottom: 3, left: 3 },
     },
     bodyStyles: {
-      fillColor: [18, 18, 16],
-      textColor: [200, 190, 170],
+      fillColor: [255, 255, 255],
+      textColor: [30, 25, 20],
       fontSize: 7,
-      cellPadding: { top: 3, right: 4, bottom: 3, left: 4 },
+      cellPadding: { top: 1, right: 3, bottom: 1, left: 3 },
+      minCellHeight: ROW_H,
+      valign: 'middle',
     },
     alternateRowStyles: {
-      fillColor: [22, 21, 18],
+      fillColor: [250, 247, 242],
     },
     columnStyles: {
-      0: { cellWidth: 8 },
-      1: { cellWidth: 50 },
-      2: { cellWidth: 14 },
-      3: { cellWidth: 32 },
-      4: { cellWidth: 28 },
-      5: { cellWidth: 48 },
-    },
+      0: { cellWidth: 22 },   // thumbnail  (22)
+      1: { cellWidth: 40 },   // title      (40)
+      2: { cellWidth: 12 },   // year       (12)
+      3: { cellWidth: 28 },   // medium     (28)
+      4: { cellWidth: 22 },   // dimensions (22)
+      5: { cellWidth: 46 },   // copyright  (46)
+    },                        // total = 170 = 210 − 20 − 20
     margin: { left: 20, right: 20 },
-    tableLineColor: [60, 55, 45],
-    tableLineWidth: 0.1,
+    tableLineColor: [210, 202, 188],
+    tableLineWidth: 0.15,
+    didDrawCell: (data) => {
+      if (data.section === 'body' && data.column.index === 0) {
+        const dataUrl = thumbs[data.row.index]
+        if (dataUrl) {
+          try {
+            const imgX = data.cell.x + 1
+            const imgY = data.cell.y + (data.cell.height - THUMB_H) / 2
+            doc.addImage(dataUrl, 'JPEG', imgX, imgY, THUMB_W, THUMB_H)
+          } catch {
+            // skip if image embedding fails for this row
+          }
+        }
+      }
+    },
   })
 
   // ── Footer on each page ───────────────────────────────────────────────────
   const totalPages = (doc as jsPDF & { internal: { getNumberOfPages: () => number } }).internal.getNumberOfPages()
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i)
+    doc.setDrawColor(210, 200, 182)
+    doc.setLineWidth(0.2)
+    doc.line(20, 286, 190, 286)
     doc.setFontSize(7)
     doc.setFont('helvetica', 'normal')
-    doc.setTextColor(80, 75, 65)
+    doc.setTextColor(150, 135, 110)
     doc.text(`ArtisTrust · ${artistName}`, 20, 290)
-    doc.text(`Page ${i} / ${totalPages}`, 150, 290, { align: 'right' })
+    doc.text(`Page ${i} / ${totalPages}`, 190, 290, { align: 'right' })
   }
 
   return doc.output('blob')

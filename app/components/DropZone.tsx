@@ -5,8 +5,7 @@ import { useCallback, useRef, useState } from 'react'
 interface DropZoneProps {
   onFiles: (files: File[]) => void
   label?: string
-  onLegacyUpload?: () => void
-  showLegacyLimit?: boolean
+  uploadCaption?: string
 }
 
 function isAcceptedImage(f: File): boolean {
@@ -48,7 +47,7 @@ async function collectFromEntry(entry: FileSystemEntry): Promise<File[]> {
   return []
 }
 
-export default function DropZone({ onFiles, label = 'Drag paintings here', onLegacyUpload, showLegacyLimit }: DropZoneProps) {
+export default function DropZone({ onFiles, label = 'Drag paintings here', uploadCaption }: DropZoneProps) {
   const [dragging, setDragging] = useState(false)
   const fileInputRef   = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -188,7 +187,13 @@ export default function DropZone({ onFiles, label = 'Drag paintings here', onLeg
             fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
             color: 'var(--text-dim)', margin: '4px 0 0',
           }}>
-            Drop images or entire folders · JPG · PNG · WEBP · TIFF · No limit
+            Drop images or entire folders · JPG · PNG · WEBP · TIFF
+            {uploadCaption && (
+              <>
+                {' · '}
+                <span style={{ color: 'var(--accent-dim)' }}>{uploadCaption}</span>
+              </>
+            )}
           </p>
 
           {/* Browse buttons */}
@@ -215,27 +220,6 @@ export default function DropZone({ onFiles, label = 'Drag paintings here', onLeg
             </button>
           </div>
 
-          {/* Legacy archive import */}
-          {onLegacyUpload && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-              <button
-                onClick={e => { e.stopPropagation(); onLegacyUpload() }}
-                style={browseBtn(false)}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.color = accent }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-dim)' }}
-              >
-                Import legacy archive
-              </button>
-              {showLegacyLimit && (
-                <span style={{
-                  fontSize: 11, letterSpacing: '0.07em',
-                  color: 'var(--muted)', fontFamily: 'var(--font-body)',
-                }}>
-                  Up to 50 works per batch on your current plan
-                </span>
-              )}
-            </div>
-          )}
         </div>
 
       </div>

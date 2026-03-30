@@ -46,15 +46,7 @@ export async function POST(req: NextRequest) {
         }, { onConflict: 'user_id' })
       }
 
-      // Legacy upload one-time payment
-      if (session.mode === 'payment' && session.metadata?.legacy_upload === 'true') {
-        await admin.from('legacy_upload_orders')
-          .update({ status: 'paid', stripe_payment_intent_id: session.payment_intent as string })
-          .eq('user_id', userId)
-          .eq('status', 'pending')
-          .order('created_at', { ascending: false })
-          .limit(1)
-      }
+      // Legacy upload one-time payment — removed
       break
     }
 
@@ -94,6 +86,15 @@ export async function POST(req: NextRequest) {
         current_period_end: null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id' })
+      break
+    }
+
+    // ── Overage payment succeeded ──────────────────────────────────────────
+    case 'payment_intent.succeeded': {
+      const pi = event.data.object as Stripe.PaymentIntent
+      // Only handle overage payments tagged by our route — no DB action needed;
+      // uploads are already queued client-side on confirmOverage().
+      if (pi.metadata?.type !== 'overage') break
       break
     }
 

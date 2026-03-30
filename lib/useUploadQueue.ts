@@ -24,8 +24,7 @@ import { Artwork, UploadDefaults } from './types'
 import { uploadImage, compressFileForAnalysis, compressFileForStorage } from './uploadImage'
 import { extractExif, exifToTags } from './extractExif'
 import { parseHints } from './parseFileName'
-import { PRESERVE_WORK_LIMIT } from './plans'
-
+import { OVERAGE_COST_USD } from './plans'
 // ─── Tuneable constants ───────────────────────────────────────────────────────
 const UPLOAD_CONCURRENCY  = 3   // simultaneous full-pipeline workers
 const ANALYSIS_CONCURRENCY = 2  // simultaneous Claude API calls within those workers
@@ -63,6 +62,14 @@ export interface UploadQueueHandle {
   clearDone: () => void
   isVisible: boolean
   setVisible: (v: boolean) => void
+  /** Proceed with overage files after user confirms the $0.05/upload charge */
+  confirmOverage: () => void
+  /** Cancel the queued overage files */
+  cancelOverage: () => void
+  /** Number of files pending overage confirmation (0 when none) */
+  pendingOverageCount: number
+  /** Total cost in USD of pending overage files */
+  pendingOverageCost: number
 }
 
 // ─── Simple semaphore ─────────────────────────────────────────────────────────
@@ -89,18 +96,21 @@ export function useUploadQueue(options: {
   onArtworkAdded: (artwork: Artwork) => void
   onArtworkUpdated: (id: string, updates: Partial<Artwork>) => void
   defaults?: UploadDefaults
-  /** Current total artwork count — used with canUpload to gate uploads */
-  currentArtworkCount?: number
-  /** Returns true when the user is allowed to upload another artwork */
-  canUpload?: (currentCount: number) => boolean
+  /** Monthly upload count this calendar month — used to enforce monthly limits */
+  monthlyUploadsUsed?: number
+  /** Monthly upload limit for this plan (null = unlimited) */
+  monthlyUploadLimit?: number | null
   /** Called when an upload is blocked by the plan limit */
   onPlanLimit?: () => void
 }): UploadQueueHandle {
-  const { userId, activeTab, onArtworkAdded, onArtworkUpdated, defaults, currentArtworkCount, canUpload, onPlanLimit } = options
+  const { userId, activeTab, onArtworkAdded, onArtworkUpdated, defaults, monthlyUploadsUsed, monthlyUploadLimit, onPlanLimit } = options
 
   const [items, setItems] = useState<QueueItem[]>([])
   const [isPaused, setIsPaused] = useState(false)
   const [isVisible, setVisible] = useState(false)
+  const [pendingOverageCount, setPendingOverageCount] = useState(0)
+  const [pendingOverageCost, setPendingOverageCost] = useState(0)
+  const pendingOverageRef = useRef<File[]>([])
 
   // Refs let callbacks always see fresh values without stale closures
   const itemsRef     = useRef<QueueItem[]>([])
@@ -291,20 +301,25 @@ export function useUploadQueue(options: {
     let files = [...inputFiles]
     if (!userIdRef.current) return
 
-    // Plan limit check — count existing artworks plus any already queued/active
-    if (canUpload) {
+    // Monthly upload limit check
+    if (monthlyUploadLimit !== null && monthlyUploadLimit !== undefined) {
       const alreadyQueued = itemsRef.current.filter(i => i.state !== 'done' && i.state !== 'error').length
-      const baseCount = (currentArtworkCount ?? 0) + alreadyQueued
-      if (!canUpload(baseCount)) {
-        onPlanLimit?.()
+      const monthlyBase = (monthlyUploadsUsed ?? 0) + alreadyQueued
+      const remaining = Math.max(0, monthlyUploadLimit - monthlyBase)
+      if (remaining === 0) {
+        // All are overage — hold for confirmation
+        pendingOverageRef.current = files
+        setPendingOverageCount(files.length)
+        setPendingOverageCost(Math.round(files.length * OVERAGE_COST_USD * 100) / 100)
         return
       }
-      // Only enqueue as many files as there are remaining slots
-      const remaining = PRESERVE_WORK_LIMIT - baseCount
       if (remaining < files.length) {
-        files = files.slice(0, Math.max(0, remaining))
-        if (files.length === 0) { onPlanLimit?.(); return }
-        onPlanLimit?.()
+        // Split: some within limit, rest need confirmation
+        const overageFiles = files.slice(remaining)
+        files = files.slice(0, remaining)
+        pendingOverageRef.current = overageFiles
+        setPendingOverageCount(overageFiles.length)
+        setPendingOverageCost(Math.round(overageFiles.length * OVERAGE_COST_USD * 100) / 100)
       }
     }
     const newItems: QueueItem[] = files.map(f => ({
@@ -371,6 +386,52 @@ export function useUploadQueue(options: {
     setTimeout(() => dispatchRef.current(), 0)
   }, [])
 
+  const confirmOverage = useCallback(() => {
+    const overageFiles = pendingOverageRef.current
+    if (!overageFiles.length) return
+    pendingOverageRef.current = []
+    setPendingOverageCount(0)
+    setPendingOverageCost(0)
+    // Enqueue overage files directly, bypassing the limit check
+    const newItems: QueueItem[] = overageFiles.map(f => ({
+      qid: uuidv4(),
+      artworkId: uuidv4(),
+      fileName: f.name,
+      state: 'waiting' as QueueItemState,
+      _file: f,
+    }))
+    itemsRef.current = [...itemsRef.current, ...newItems]
+    setItems([...itemsRef.current])
+    setVisible(true)
+    // Extract EXIF/hints for overage files the same as normal uploads
+    newItems.forEach(async (item) => {
+      const file = item._file!
+      const [exif, hints] = await Promise.all([
+        extractExif(file),
+        Promise.resolve(
+          parseHints(file.name, (file as File & { relativePath?: string }).relativePath)
+        ),
+      ])
+      const year = exif.year ?? hints.year ?? ''
+      const cameraTags = exifToTags(exif)
+      if (year || Object.keys(exif).length > 0 || cameraTags.length > 0) {
+        if (cameraTags.length > 0) cameraTagsRef.current.set(item.artworkId, cameraTags)
+        onArtworkUpdated(item.artworkId, {
+          ...(year ? { year } : {}),
+          exifData: Object.keys(exif).length > 0 ? exif : undefined,
+          ...(cameraTags.length > 0 ? { tags: cameraTags } : {}),
+        })
+      }
+    })
+    setTimeout(() => dispatchRef.current(), 0)
+  }, [onArtworkUpdated])
+
+  const cancelOverage = useCallback(() => {
+    pendingOverageRef.current = []
+    setPendingOverageCount(0)
+    setPendingOverageCost(0)
+  }, [])
+
   const clearDone = useCallback(() => {
     itemsRef.current = itemsRef.current.filter(i => i.state !== 'done')
     setItems([...itemsRef.current])
@@ -384,5 +445,5 @@ export function useUploadQueue(options: {
     errors:  items.filter(i => i.state === 'error').length,
   }
 
-  return { items, stats, isPaused, addFiles, pause, resume, retryErrors, clearDone, isVisible, setVisible }
+  return { items, stats, isPaused, addFiles, pause, resume, retryErrors, clearDone, isVisible, setVisible, confirmOverage, cancelOverage, pendingOverageCount, pendingOverageCost }
 }

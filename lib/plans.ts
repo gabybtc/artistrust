@@ -3,9 +3,18 @@
 export type Plan = 'preserve' | 'studio' | 'archive' | 'beta'
 export type BillingInterval = 'monthly' | 'annual'
 
-// ── Preserve work limit ───────────────────────────────────────────────────────
+// ── Monthly upload limits ─────────────────────────────────────────────────────
+// null = unlimited (beta). Overage uploads cost OVERAGE_COST_USD each.
 
-export const PRESERVE_WORK_LIMIT = 50
+export const MONTHLY_UPLOAD_LIMITS: Record<Plan, number | null> = {
+  preserve: 25,
+  studio:   100,
+  archive:  250,
+  beta:     null,
+}
+
+/** Cost in USD charged per upload that exceeds the monthly plan limit */
+export const OVERAGE_COST_USD = 0.05
 
 // ── Stripe price IDs (set in env) ────────────────────────────────────────────
 // NEXT_PUBLIC_ prefix so they are safely readable on the client for checkout.
@@ -28,13 +37,13 @@ export const PLAN_CONFIG = {
     annualMonthlyPrice: 0,
     annualTotal: 0,
     features: [
-      { label: 'Up to 50 works',              included: true  },
-      { label: 'AI analysis on every upload', included: true  },
-      { label: 'Voice memos',                 included: true  },
+      { label: '25 uploads / month',              included: true  },
+      { label: 'AI analysis on every upload',     included: true  },
+      { label: 'Voice memos',                     included: true  },
       { label: 'Full archive export at any time', included: true  },
-      { label: 'Unlimited works',             included: false },
-      { label: 'Film archive metadata',       included: false },
-      { label: 'Copyright export package',    included: false },
+      { label: 'Film archive metadata',           included: false },
+      { label: 'Copyright export package',        included: false },
+      { label: 'Shareable portfolio',             included: false },
     ],
   },
   studio: {
@@ -46,13 +55,13 @@ export const PLAN_CONFIG = {
     annualTotal: 77,
     mostPopular: true,
     features: [
-      { label: 'Unlimited works',                included: true  },
-      { label: 'AI analysis on every upload',    included: true  },
-      { label: 'Voice memos – artist\'s story',  included: true  },
-      { label: 'Film archive metadata',          included: true  },
-      { label: 'Full archive export at any time',included: true  },
-      { label: 'Copyright export package',       included: true  },
-      { label: 'Shareable portfolio',            included: false },
+      { label: '100 uploads / month',             included: true  },
+      { label: 'AI analysis on every upload',     included: true  },
+      { label: 'Voice memos – artist\'s story',   included: true  },
+      { label: 'Film archive metadata',           included: true  },
+      { label: 'Copyright export package',        included: true  },
+      { label: 'Full archive export at any time', included: true  },
+      { label: 'Shareable portfolio',             included: false },
     ],
   },
   archive: {
@@ -63,16 +72,15 @@ export const PLAN_CONFIG = {
     annualMonthlyPrice: 12,
     annualTotal: 144,
     features: [
-      { label: 'Unlimited works',                included: true  },
-      { label: 'AI analysis on every upload',    included: true  },
-      { label: 'Voice memos – artist\'s story',  included: true  },
-      { label: 'Film archive metadata',          included: true  },
-      { label: 'Shareable public portfolio',     included: true  },
-      { label: 'PDF catalogue export',           included: true  },
-      { label: 'Full archive export at any time',included: true  },
-      { label: 'Copyright export package',       included: true  },
-      { label: 'Annual plan: free legacy upload',included: true  },
-      { label: 'Dedicated archivist support',    included: true  },
+      { label: '250 uploads / month',             included: true  },
+      { label: 'AI analysis on every upload',     included: true  },
+      { label: 'Voice memos – artist\'s story',   included: true  },
+      { label: 'Film archive metadata',           included: true  },
+      { label: 'Shareable public portfolio',      included: true  },
+      { label: 'PDF catalogue export',            included: true  },
+      { label: 'Copyright export package',        included: true  },
+      { label: 'Full archive export at any time', included: true  },
+      { label: 'Dedicated archivist support',     included: true  },
     ],
   },
   beta: {
@@ -89,10 +97,26 @@ export const PLAN_CONFIG = {
 // ── Permission helpers ────────────────────────────────────────────────────────
 // All functions accept a Plan and are pure — no async, no DB calls.
 
-/** Whether the user can upload another artwork given their current work count. */
-export function canUploadMore(plan: Plan, currentCount: number): boolean {
-  if (plan === 'preserve') return currentCount < PRESERVE_WORK_LIMIT
-  return true // studio, archive, beta all have unlimited uploads
+/** Monthly upload limit for a plan (null = unlimited). */
+export function getMonthlyUploadLimit(plan: Plan): number | null {
+  return MONTHLY_UPLOAD_LIMITS[plan]
+}
+
+/**
+ * Whether the user is within their free monthly upload allowance.
+ * monthlyCount = number of artworks uploaded so far this calendar month.
+ */
+export function canUploadMore(plan: Plan, monthlyCount: number): boolean {
+  const limit = MONTHLY_UPLOAD_LIMITS[plan]
+  if (limit === null) return true
+  return monthlyCount < limit
+}
+
+/** Free uploads remaining this month (null = unlimited). */
+export function monthlyUploadsRemaining(plan: Plan, monthlyCount: number): number | null {
+  const limit = MONTHLY_UPLOAD_LIMITS[plan]
+  if (limit === null) return null
+  return Math.max(0, limit - monthlyCount)
 }
 
 /** Whether the user can use copyright export package. */
@@ -113,36 +137,6 @@ export function canSharePortfolio(plan: Plan): boolean {
 /** Whether the user can export a PDF catalogue. */
 export function canExportPdf(plan: Plan): boolean {
   return plan === 'archive' || plan === 'beta'
-}
-
-/** Whether the user gets a free legacy upload (annual Studio/Archive or beta). */
-export function hasFreeLegacyUpload(plan: Plan, interval: BillingInterval | null): boolean {
-  if (plan === 'beta') return true
-  if ((plan === 'studio' || plan === 'archive') && interval === 'annual') return true
-  return false
-}
-
-/**
- * Returns the one-time legacy upload fee in cents for a given work count.
- * Returns 0 if the user is entitled to a free legacy upload.
- *
- * Tiers (matching the website):
- *   1–50 works:   free
- *   51–200 works: $15
- *   201–500 works: $29
- *   501+ works:   $0.10/work (returned as total cents)
- */
-export function getLegacyUploadFee(
-  workCount: number,
-  plan: Plan,
-  interval: BillingInterval | null,
-): { cents: number; tier: string } {
-  if (hasFreeLegacyUpload(plan, interval) || workCount <= 50) {
-    return { cents: 0, tier: '1-50' }
-  }
-  if (workCount <= 200) return { cents: 1500, tier: '51-200' }
-  if (workCount <= 500) return { cents: 2900, tier: '201-500' }
-  return { cents: workCount * 10, tier: '501+' }
 }
 
 /** Human-readable display label for the plan, used in badges etc. */

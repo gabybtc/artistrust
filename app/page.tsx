@@ -9,7 +9,6 @@ import { generatePdfCatalogue } from '@/lib/pdfCatalogue'
 import { planLabel } from '@/lib/plans'
 import CopyrightExportModal from './components/CopyrightExportModal'
 import PricingModal from './components/PricingModal'
-import LegacyUploadModal from './components/LegacyUploadModal'
 import { useUploadQueue } from '@/lib/useUploadQueue'
 import { useUploadDefaults } from '@/lib/useUploadDefaults'
 import ArtworkModal from './components/ArtworkModal'
@@ -35,7 +34,6 @@ export default function Home() {
   const [searchTerm, setSearchTerm] = useState('')
   const [pricingOpen, setPricingOpen] = useState(false)
   const [pricingLockedFeature, setPricingLockedFeature] = useState<'copyright' | 'exif' | 'portfolio' | 'pdf' | 'upload_limit' | undefined>()
-  const [legacyUploadOpen, setLegacyUploadOpen] = useState(false)
   const [pdfGenerating, setPdfGenerating] = useState(false)
 
   const openPricing = useCallback((feature?: typeof pricingLockedFeature) => {
@@ -57,6 +55,8 @@ export default function Home() {
   const [copyrightModalOpen, setCopyrightModalOpen] = useState(false)
   const [copyrightInitialSelected, setCopyrightInitialSelected] = useState<Set<string>>(new Set())
   const [copyrightArtistName, setCopyrightArtistName] = useState<string>('Artist')
+  const [overageLoading, setOverageLoading] = useState(false)
+  const [overageError, setOverageError] = useState('')
   const [sortBy, setSortBy] = useState<string>(() =>
     typeof window !== 'undefined' ? (localStorage.getItem('artistrust_sort') ?? 'uploaded-desc') : 'uploaded-desc'
   )
@@ -77,10 +77,6 @@ export default function Home() {
       const params = new URLSearchParams(window.location.search)
       if (params.get('billing') === 'success') {
         showToast('Plan upgraded successfully!')
-        window.history.replaceState({}, '', '/')
-      }
-      if (params.get('legacy') === 'success') {
-        showToast('Legacy upload unlocked — drag your archive in!')
         window.history.replaceState({}, '', '/')
       }
     }
@@ -148,8 +144,11 @@ export default function Home() {
     onArtworkAdded,
     onArtworkUpdated,
     defaults: uploadDefaults.defaults,
-    currentArtworkCount: artworks.length,
-    canUpload: subscription.canUploadMore,
+    monthlyUploadsUsed: useMemo(() => {
+      const start = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1))
+      return artworks.filter(a => new Date(a.uploadedAt) >= start).length
+    }, [artworks]),
+    monthlyUploadLimit: subscription.monthlyUploadLimit,
     onPlanLimit: () => openPricing('upload_limit'),
   })
 
@@ -188,29 +187,7 @@ export default function Home() {
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
 
-  const selectAll = useCallback(() => {
-    setSelectedIds(new Set(
-      artworks
-        .filter(a => {
-          if ((a.mediaType ?? tabs[0].id) !== activeTab) return false
-          if (filter === 'complete' && a.status !== 'complete') return false
-          if (filter === 'pending' && a.status === 'complete') return false
-          if (searchTerm) {
-            const q = searchTerm.toLowerCase()
-            return !!(
-              a.title?.toLowerCase().includes(q) ||
-              a.year?.includes(q) ||
-              a.place?.toLowerCase().includes(q) ||
-              a.aiAnalysis?.style?.toLowerCase().includes(q) ||
-              a.aiAnalysis?.medium?.toLowerCase().includes(q) ||
-              a.aiAnalysis?.subject?.toLowerCase().includes(q)
-            )
-          }
-          return true
-        })
-        .map(a => a.id)
-    ))
-  }, [artworks, tabs, activeTab, filter, searchTerm])
+  // selectAll is defined after tagFiltered (below)
 
   const handleBulkDelete = useCallback(() => {
     const ids = Array.from(selectedIds)
@@ -375,6 +352,10 @@ export default function Home() {
       ? sorted
       : sorted.filter(a => [...activeTags].every(t => a.tags?.includes(t)))
   , [sorted, activeTags])
+
+  const selectAll = useCallback(() => {
+    setSelectedIds(new Set(tagFiltered.map(a => a.id)))
+  }, [tagFiltered])
 
   const tabArtworks = artworks.filter(a => (a.mediaType ?? tabs[0].id) === activeTab)
 
@@ -553,32 +534,44 @@ export default function Home() {
                     </button>
                   )}
                   {!subscription.loading && process.env.NEXT_PUBLIC_BILLING_ENABLED === 'true' && (
-                    <button
-                      onClick={() => openPricing()}
-                      title="View plans & upgrade"
-                      style={{
-                        background: 'transparent',
-                        border: '1px solid var(--border)',
+                    subscription.subscription?.isBeta ? (
+                      <span style={{
+                        border: '1px solid var(--accent-dim)',
                         borderRadius: 2, padding: '4px 10px',
                         fontFamily: 'var(--font-body)',
                         fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
-                        color: subscription.subscription?.plan === 'beta' ? 'var(--accent)' : 'var(--text-dim)',
-                        cursor: 'pointer', transition: 'all 0.18s',
-                        display: 'flex', alignItems: 'center', gap: 5,
-                      }}
-                      onMouseEnter={e => {
-                        e.currentTarget.style.borderColor = 'var(--accent-dim)'
-                        e.currentTarget.style.color = 'var(--accent)'
-                      }}
-                      onMouseLeave={e => {
-                        e.currentTarget.style.borderColor = 'var(--border)'
-                        e.currentTarget.style.color = subscription.subscription?.plan === 'beta' ? 'var(--accent)' : 'var(--text-dim)'
-                      }}
-                    >
-                      {planLabel(subscription.subscription?.plan ?? 'preserve')}
-                      <span style={{ opacity: 0.45 }}>·</span>
-                      <span style={{ color: 'var(--accent-dim)' }}>Plans</span>
-                    </button>
+                        color: 'var(--accent)',
+                      }}>
+                        Beta Tester
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => openPricing()}
+                        title="View plans & upgrade"
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid var(--border)',
+                          borderRadius: 2, padding: '4px 10px',
+                          fontFamily: 'var(--font-body)',
+                          fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
+                          color: 'var(--text-dim)',
+                          cursor: 'pointer', transition: 'all 0.18s',
+                          display: 'flex', alignItems: 'center', gap: 5,
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.borderColor = 'var(--accent-dim)'
+                          e.currentTarget.style.color = 'var(--accent)'
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.borderColor = 'var(--border)'
+                          e.currentTarget.style.color = 'var(--text-dim)'
+                        }}
+                      >
+                        {planLabel(subscription.subscription?.plan ?? 'preserve')}
+                        <span style={{ opacity: 0.45 }}>·</span>
+                        <span style={{ color: 'var(--accent-dim)' }}>Plans</span>
+                      </button>
+                    )
                   )}
                   <button
                     onClick={() => setLegalOpen(true)}
@@ -788,8 +781,15 @@ export default function Home() {
             <DropZone
               onFiles={handleFiles}
               label={activeTab === 'photography' ? 'Drag photographs & scans here' : `Drag ${tabs.find(t => t.id === activeTab)?.label.toLowerCase() ?? 'works'} here`}
-              onLegacyUpload={user ? () => setLegacyUploadOpen(true) : undefined}
-              showLegacyLimit={!!user && !subscription.loading && !subscription.hasFreeLegacyUpload}
+              uploadCaption={(() => {
+                const used = artworks.filter(a => {
+                  const start = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1))
+                  return new Date(a.uploadedAt) >= start
+                }).length
+                const limit = subscription.monthlyUploadLimit
+                if (limit === null || limit === undefined) return 'Unlimited uploads'
+                return `${used} / ${limit} uploads this month`
+              })()}
             />
           </div>
 
@@ -891,8 +891,28 @@ export default function Home() {
                 <span style={{
                   fontSize: 12, color: 'var(--text-dim)', letterSpacing: '0.06em',
                 }}>
-                  {filtered.length} {filtered.length === 1 ? 'work' : 'works'}
+                  {tagFiltered.length} {tagFiltered.length === 1 ? 'work' : 'works'}
                 </span>
+
+                {user && tagFiltered.length > 0 && (
+                  <button
+                    onClick={selectedIds.size === tagFiltered.length ? clearSelection : selectAll}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      padding: '0 2px',
+                      color: 'var(--text-dim)',
+                      fontFamily: 'var(--font-body)',
+                      fontSize: 11, letterSpacing: '0.08em',
+                      cursor: 'pointer', transition: 'color 0.15s',
+                      textDecoration: 'underline', textUnderlineOffset: 3,
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent)')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+                  >
+                    {selectedIds.size === tagFiltered.length ? 'Deselect all' : 'Select all'}
+                  </button>
+                )}
 
                 {/* View mode toggle — grid / colour wheel */}
                 {tabArtworks.length > 0 && (
@@ -954,7 +974,7 @@ export default function Home() {
               </span>
 
               <button
-                onClick={selectedIds.size === filtered.length ? clearSelection : selectAll}
+                onClick={selectedIds.size === tagFiltered.length ? clearSelection : selectAll}
                 style={{
                   background: 'transparent', border: '1px solid var(--border)',
                   borderRadius: 2, padding: '4px 11px',
@@ -963,7 +983,7 @@ export default function Home() {
                   cursor: 'pointer',
                 }}
               >
-                {selectedIds.size === filtered.length ? 'Deselect all' : 'Select all'}
+                {selectedIds.size === tagFiltered.length ? 'Deselect all' : 'Select all'}
               </button>
 
               <div style={{ flex: 1 }} />
@@ -1333,24 +1353,100 @@ export default function Home() {
           onClose={() => setPricingOpen(false)}
           onUpgrade={(plan, interval) => {
             setPricingOpen(false)
+            const label = plan === 'preserve' ? 'Preserve' : plan === 'studio' ? 'Studio' : 'Archive'
             subscription.openCheckout(plan, interval)
+              .then(() => showToast(plan === 'preserve' ? 'Downgraded to Preserve — takes effect at period end' : `Upgraded to ${label}`))
+              .catch((err: Error) => showToast(err.message))
           }}
           lockedFeature={pricingLockedFeature}
           currentPlan={subscription.subscription?.plan ?? 'preserve'}
-          onManageBilling={subscription.subscription?.stripeSubscriptionId ? () => { setPricingOpen(false); subscription.openPortal() } : undefined}
+          onManageBilling={subscription.subscription?.stripeSubscriptionId ? () => {
+            setPricingOpen(false)
+            subscription.openPortal().catch((err: Error) => showToast(err.message))
+          } : undefined}
         />
       )}
 
-      {legacyUploadOpen && process.env.NEXT_PUBLIC_BILLING_ENABLED === 'true' && (
-        <LegacyUploadModal
-          plan={subscription.subscription?.plan ?? 'preserve'}
-          billingInterval={subscription.subscription?.billingInterval ?? null}
-          onClose={() => setLegacyUploadOpen(false)}
-          onUnlocked={() => {
-            setLegacyUploadOpen(false)
-            showToast('Legacy upload unlocked — drag your archive in!')
-          }}
-        />
+      {/* Overage confirmation dialog */}
+      {uploadQueue.pendingOverageCount > 0 && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#1a1a1a', border: '1px solid #333', borderRadius: 14,
+            padding: '28px 32px', maxWidth: 420, width: '90%',
+          }}>
+            <h2 style={{ margin: '0 0 10px', fontSize: 18, fontWeight: 600, color: '#f5f5f5' }}>
+              Monthly limit reached
+            </h2>
+            <p style={{ margin: '0 0 8px', fontSize: 14, color: '#aaa', lineHeight: 1.6 }}>
+              {uploadQueue.pendingOverageCount === 1
+                ? 'This upload exceeds your monthly limit.'
+                : `These ${uploadQueue.pendingOverageCount} uploads exceed your monthly limit.`}{' '}
+              Your saved card will be charged{' '}
+              <strong style={{ color: '#f5f5f5' }}>${uploadQueue.pendingOverageCost.toFixed(2)}</strong>
+              {' '}($0.05 per upload).
+            </p>
+            {overageError && (
+              <p style={{ margin: '0 0 14px', fontSize: 13, color: '#f87171', lineHeight: 1.5 }}>
+                {overageError === 'no_payment_method'
+                  ? 'No payment method on file. Add a card in your billing settings, then try again.'
+                  : overageError === 'payment_requires_action'
+                  ? 'Your card requires additional verification. Please use a different card via billing settings.'
+                  : `Payment failed: ${overageError}`}
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { uploadQueue.cancelOverage(); setOverageError('') }}
+                disabled={overageLoading}
+                style={{
+                  padding: '8px 18px', borderRadius: 8, border: '1px solid #444',
+                  background: 'transparent', color: '#aaa', cursor: 'pointer', fontSize: 13,
+                  opacity: overageLoading ? 0.5 : 1,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={overageLoading}
+                onClick={async () => {
+                  setOverageLoading(true)
+                  setOverageError('')
+                  const { data } = await supabase.auth.getSession()
+                  const token = data.session?.access_token
+                  if (!token) {
+                    setOverageError('Not signed in')
+                    setOverageLoading(false)
+                    return
+                  }
+                  const res = await fetch('/api/billing/overage', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({ count: uploadQueue.pendingOverageCount }),
+                  })
+                  const json = await res.json() as { error?: string; message?: string }
+                  if (!res.ok) {
+                    setOverageError(json.error ?? json.message ?? 'Payment failed')
+                    setOverageLoading(false)
+                    return
+                  }
+                  uploadQueue.confirmOverage()
+                  setOverageLoading(false)
+                }}
+                style={{
+                  padding: '8px 18px', borderRadius: 8, border: 'none',
+                  background: overageLoading ? '#888' : '#f5f5f5',
+                  color: '#111', cursor: overageLoading ? 'wait' : 'pointer', fontSize: 13, fontWeight: 600,
+                }}
+              >
+                {overageLoading ? 'Charging…' : `Upload for $${uploadQueue.pendingOverageCost.toFixed(2)}`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Auth gate — shown when not signed in */}

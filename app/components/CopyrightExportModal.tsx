@@ -3,10 +3,15 @@ import { useState, useMemo, useCallback, useEffect } from 'react'
 import type { Artwork } from '@/lib/types'
 import type { Plan } from '@/lib/plans'
 import { canExportCopyright } from '@/lib/plans'
-import { generatePhotographsPackage } from '@/lib/copyrightPackage'
-
-const GROUP_SIZE_PHOTO = 750
-const GROUP_SIZE_2D = 20
+import {
+  generateCopyrightPackage,
+  initialsFromName,
+  buildApplicationGroups,
+  BATCH_SIZE,
+  FILING_FEE,
+  type WorkType,
+  type PublishedStatus,
+} from '@/lib/copyrightPackage'
 
 interface Props {
   artworks: Artwork[]
@@ -17,93 +22,181 @@ interface Props {
   onUpgradeClick?: () => void
 }
 
-type Tab = 'photographs' | '2d-visual-art'
+type Step = 'configure' | 'select' | 'preview'
+
+// ─── Upgrade gate ─────────────────────────────────────────────────────────────
+
+function UpgradeGate({ onClose, onUpgradeClick }: { onClose: () => void; onUpgradeClick?: () => void }) {
+  return (
+    <div
+      role="dialog" aria-modal="true"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9000,
+        background: 'rgba(0,0,0,0.72)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        backdropFilter: 'blur(4px)',
+      }}
+    >
+      <div style={{
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: 4, padding: '44px 48px', maxWidth: 420, textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 28, marginBottom: 16 }}>©</div>
+        <h3 style={{
+          fontFamily: 'var(--font-display)', fontSize: 20,
+          fontWeight: 400, fontStyle: 'italic', color: 'var(--text)', marginBottom: 12,
+        }}>Studio plan required</h3>
+        <p style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.7, marginBottom: 28 }}>
+          Copyright export packages are available on Studio and Archive plans. Generate
+          submission-ready packages for the U.S. Copyright Office with deposit images,
+          code strings, and a plain-English step-by-step guide.
+        </p>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+          <button
+            onClick={() => { onClose(); onUpgradeClick?.() }}
+            style={{
+              background: 'var(--accent)', border: 'none', borderRadius: 2,
+              padding: '9px 24px', fontFamily: 'var(--font-body)',
+              fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
+              color: '#0a0a0a', cursor: 'pointer',
+            }}
+          >
+            View plans
+          </button>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'transparent', border: '1px solid var(--border)', borderRadius: 2,
+              padding: '9px 24px', fontFamily: 'var(--font-body)',
+              fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
+              color: 'var(--text-dim)', cursor: 'pointer',
+            }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Small reusable button ────────────────────────────────────────────────────
+
+function SmallButton({ onClick, children, active }: { onClick: () => void; children: React.ReactNode; active?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: active ? 'rgba(201,169,110,0.12)' : 'transparent',
+        border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+        borderRadius: 2, padding: '4px 10px',
+        color: active ? 'var(--accent)' : 'var(--text-dim)',
+        fontFamily: 'var(--font-body)',
+        fontSize: 10, letterSpacing: '0.09em', textTransform: 'uppercase',
+        cursor: 'pointer', transition: 'color 0.15s, border-color 0.15s, background 0.15s',
+      }}
+      onMouseEnter={e => {
+        if (!active) {
+          e.currentTarget.style.color = 'var(--text)'
+          e.currentTarget.style.borderColor = 'var(--text-dim)'
+        }
+      }}
+      onMouseLeave={e => {
+        if (!active) {
+          e.currentTarget.style.color = 'var(--text-dim)'
+          e.currentTarget.style.borderColor = 'var(--border)'
+        }
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+// ─── Step indicator ───────────────────────────────────────────────────────────
+
+function StepDots({ step }: { step: Step }) {
+  const steps: Step[] = ['configure', 'select', 'preview']
+  const labels = ['Configure', 'Select works', 'Review & export']
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      {steps.map((s, i) => (
+        <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: s === step ? 'var(--accent)' : steps.indexOf(step) > i ? 'var(--accent)' : 'var(--border)',
+            transition: 'background 0.2s',
+            opacity: s === step ? 1 : steps.indexOf(step) > i ? 0.5 : 0.3,
+          }} />
+          <span style={{
+            fontSize: 10, fontFamily: 'var(--font-body)', letterSpacing: '0.1em',
+            textTransform: 'uppercase',
+            color: s === step ? 'var(--accent)' : 'var(--text-dim)',
+            opacity: s === step ? 1 : 0.5,
+          }}>{labels[i]}</span>
+          {i < steps.length - 1 && (
+            <div style={{ width: 16, height: 1, background: 'var(--border)', marginLeft: 2, marginRight: 2 }} />
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── Main modal ───────────────────────────────────────────────────────────────
 
 export default function CopyrightExportModal({ artworks, initialSelected, artistName, onClose, plan = 'preserve', onUpgradeClick }: Props) {
   const allowed = canExportCopyright(plan)
-  if (!allowed) {
-    return (
-      <div
-        role="dialog" aria-modal="true"
-        onClick={e => { if (e.target === e.currentTarget) onClose() }}
-        style={{
-          position: 'fixed', inset: 0, zIndex: 60,
-          background: 'rgba(0,0,0,0.72)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          backdropFilter: 'blur(4px)',
-        }}
-      >
-        <div style={{
-          background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 4, padding: '44px 48px', maxWidth: 400, textAlign: 'center',
-        }}>
-          <div style={{ fontSize: 24, marginBottom: 16 }}>©</div>
-          <h3 style={{
-            fontFamily: 'var(--font-display)', fontSize: 20,
-            fontWeight: 400, fontStyle: 'italic', color: 'var(--text)', marginBottom: 12,
-          }}>Studio plan required</h3>
-          <p style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.6, marginBottom: 28 }}>
-            Copyright export packages are available on the Studio and Archive plans.
-          </p>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-            <button
-              onClick={() => { onClose(); onUpgradeClick?.() }}
-              style={{
-                background: 'var(--accent)', border: 'none', borderRadius: 2,
-                padding: '9px 24px', fontFamily: 'var(--font-body)',
-                fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
-                color: '#0a0a0a', cursor: 'pointer',
-              }}
-            >
-              View plans
-            </button>
-            <button
-              onClick={onClose}
-              style={{
-                background: 'transparent', border: '1px solid var(--border)', borderRadius: 2,
-                padding: '9px 24px', fontFamily: 'var(--font-body)',
-                fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase',
-                color: 'var(--text-dim)', cursor: 'pointer',
-              }}
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-  const [activeTab, setActiveTab] = useState<Tab>('photographs')
+  if (!allowed) return <UpgradeGate onClose={onClose} onUpgradeClick={onUpgradeClick} />
+
+  // ── Step state ────────────────────────────────────────────────────────────
+  const [step, setStep] = useState<Step>('configure')
+
+  // ── Configuration state ───────────────────────────────────────────────────
+  const [workType, setWorkType] = useState<WorkType>('photographs')
+  const [publishedStatus, setPublishedStatus] = useState<PublishedStatus>('unpublished')
+  const [prefix, setPrefix] = useState(() => initialsFromName(artistName))
+  const [prefixError, setPrefixError] = useState('')
+
+  // ── Work selection ────────────────────────────────────────────────────────
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set(initialSelected))
+
+  useEffect(() => { setCheckedIds(new Set(initialSelected)) }, [initialSelected])
+  useEffect(() => { setPrefix(initialsFromName(artistName)) }, [artistName])
+
+  // ── Generation state ──────────────────────────────────────────────────────
   const [generating, setGenerating] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const [copiedGroup, setCopiedGroup] = useState<number | null>(null)
-
-  // Reset selection whenever the modal re-opens with new initialSelected
-  useEffect(() => {
-    setCheckedIds(new Set(initialSelected))
-  }, [initialSelected])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(null), 2800)
   }, [])
 
+  // ── Derived data ──────────────────────────────────────────────────────────
   const selectedArtworks = useMemo(
     () => artworks.filter(a => checkedIds.has(a.id)),
     [artworks, checkedIds],
   )
 
-  // Group preview
-  const groups = useMemo(() => {
-    const size = activeTab === 'photographs' ? GROUP_SIZE_PHOTO : GROUP_SIZE_2D
-    const result: Artwork[][] = []
-    for (let i = 0; i < selectedArtworks.length; i += size) {
-      result.push(selectedArtworks.slice(i, i + size))
-    }
-    return result
-  }, [selectedArtworks, activeTab])
+  const worksWithNoTitle = useMemo(
+    () => selectedArtworks.filter(a => !a.title && !a.aiAnalysis?.suggestedTitle),
+    [selectedArtworks],
+  )
 
+  // Cost preview (uses placeholder image sizes of 0 since we don't know sizes yet)
+  const costPreview = useMemo(() => {
+    if (selectedArtworks.length === 0) return null
+    const dummySizes = new Map<string, number>()
+    const groups = buildApplicationGroups(selectedArtworks, selectedArtworks.map((_, i) => `${prefix}${String(i + 1).padStart(3, '0')}`), workType, dummySizes)
+    const totalApps = groups.length
+    const fee = FILING_FEE[workType]
+    const totalPasteBatches = groups.reduce((sum, g) => sum + g.pasteBatches.length, 0)
+    return { totalApps, fee, totalFee: totalApps * fee, totalPasteBatches, groups }
+  }, [selectedArtworks, workType, prefix])
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
   const toggleOne = (id: string) => {
     setCheckedIds(prev => {
       const next = new Set(prev)
@@ -112,47 +205,320 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
     })
   }
 
-  const selectAll = () => setCheckedIds(new Set(artworks.map(a => a.id)))
-  const deselectAll = () => setCheckedIds(new Set())
-  const preSelectPhotographs = () =>
-    setCheckedIds(new Set(artworks.filter(a => a.mediaType === 'photography').map(a => a.id)))
-
-  const copyGroupTitles = async (group: Artwork[], groupIndex: number) => {
-    const titles = group.map(a => a.title || a.aiAnalysis?.suggestedTitle || 'Untitled').join(', ')
-    try {
-      await navigator.clipboard.writeText(titles)
-      setCopiedGroup(groupIndex)
-      setTimeout(() => setCopiedGroup(null), 2000)
-    } catch {
-      showToast('Could not access clipboard — copy from the downloaded file instead')
-    }
+  const validatePrefix = (val: string) => {
+    const clean = val.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4)
+    setPrefix(clean)
+    setPrefixError(clean.length < 1 ? 'Prefix must be at least 1 character' : '')
   }
 
   const handleGenerate = async () => {
-    if (generating || selectedArtworks.length === 0) return
+    if (generating || selectedArtworks.length === 0 || prefixError) return
     setGenerating(true)
     try {
-      const blob = await generatePhotographsPackage(selectedArtworks, artistName)
+      const blob = await generateCopyrightPackage({
+        artworks: selectedArtworks,
+        artistName,
+        prefix,
+        workType,
+        publishedStatus,
+      })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `copyright-photographs-${new Date().toISOString().slice(0, 10)}.zip`
+      a.download = `ArtisTrust_Copyright_Export_${new Date().toISOString().slice(0, 10)}.zip`
       a.click()
       URL.revokeObjectURL(url)
       showToast('Package downloaded')
+    } catch {
+      showToast('Something went wrong — please try again')
     } finally {
       setGenerating(false)
     }
   }
 
-  // Close on backdrop click
   const onBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) onClose()
   }
 
-  const missingCount = selectedArtworks.filter(
-    a => !a.title && !a.aiAnalysis?.suggestedTitle,
-  ).length
+  // ── Render helpers ────────────────────────────────────────────────────────
+
+  const renderConfigure = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+
+      {/* Type of work */}
+      <div>
+        <SectionLabel>Type of work</SectionLabel>
+        <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+          {([
+            { id: 'photographs', label: 'Photographs', sub: `Up to ${BATCH_SIZE.photographs} per application` },
+            { id: '2d-visual-art', label: 'Paintings & Visual Art', sub: `Up to ${BATCH_SIZE['2d-visual-art']} per application` },
+          ] as const).map(opt => (
+            <button
+              key={opt.id}
+              onClick={() => setWorkType(opt.id)}
+              style={{
+                flex: 1,
+                padding: '14px 16px',
+                background: workType === opt.id ? 'rgba(201,169,110,0.08)' : 'var(--surface)',
+                border: `1px solid ${workType === opt.id ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: 3, cursor: 'pointer', textAlign: 'left',
+                transition: 'border-color 0.15s, background 0.15s',
+              }}
+            >
+              <div style={{ fontSize: 13, color: workType === opt.id ? 'var(--accent)' : 'var(--text)', fontFamily: 'var(--font-body)', marginBottom: 4 }}>
+                {opt.label}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>
+                {opt.sub}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Published status */}
+      <div>
+        <SectionLabel>Published or unpublished?</SectionLabel>
+        <p style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.7, margin: '6px 0 10px' }}>
+          Have these works been sold, licensed, or made publicly available for download?
+          If you&apos;re not sure, choose <em>Unpublished</em>.
+        </p>
+        <div style={{ display: 'flex', gap: 10 }}>
+          {([
+            { id: 'unpublished', label: 'Unpublished', sub: 'Not yet sold, licensed, or publicly distributed' },
+            { id: 'published', label: 'Published', sub: 'Previously sold, licensed, or publicly released' },
+          ] as const).map(opt => (
+            <button
+              key={opt.id}
+              onClick={() => setPublishedStatus(opt.id)}
+              style={{
+                flex: 1,
+                padding: '14px 16px',
+                background: publishedStatus === opt.id ? 'rgba(201,169,110,0.08)' : 'var(--surface)',
+                border: `1px solid ${publishedStatus === opt.id ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: 3, cursor: 'pointer', textAlign: 'left',
+                transition: 'border-color 0.15s, background 0.15s',
+              }}
+            >
+              <div style={{ fontSize: 13, color: publishedStatus === opt.id ? 'var(--accent)' : 'var(--text)', fontFamily: 'var(--font-body)', marginBottom: 4 }}>
+                {opt.label}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>
+                {opt.sub}
+              </div>
+            </button>
+          ))}
+        </div>
+        {publishedStatus === 'published' && workType === '2d-visual-art' && (
+          <div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(224,160,90,0.08)', border: '1px solid rgba(224,160,90,0.25)', borderRadius: 2 }}>
+            <span style={{ fontSize: 11, color: '#e0a05a', fontFamily: 'var(--font-body)' }}>
+              ⚠ Published visual artworks must be grouped by calendar year for separate applications.
+              Make sure your selected works are from the same year, or split them manually.
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Code prefix */}
+      <div>
+        <SectionLabel>Reference code prefix</SectionLabel>
+        <p style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.7, margin: '6px 0 10px' }}>
+          Each work gets a unique code like <strong style={{ color: 'var(--text)' }}>{prefix || 'RB'}001</strong>,{' '}
+          <strong style={{ color: 'var(--text)' }}>{prefix || 'RB'}002</strong>.
+          These are used as deposit file names and in your Reference Template.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <input
+            value={prefix}
+            onChange={e => validatePrefix(e.target.value)}
+            maxLength={4}
+            style={{
+              width: 80, padding: '7px 10px',
+              background: 'var(--bg)', border: `1px solid ${prefixError ? '#e0a05a' : 'var(--border)'}`,
+              borderRadius: 2, color: 'var(--text)', fontSize: 14,
+              fontFamily: 'var(--font-body)', fontWeight: 500, letterSpacing: '0.1em',
+              outline: 'none', textTransform: 'uppercase',
+            }}
+            placeholder="RB"
+          />
+          <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>
+            Auto-generated from artist name · 1–4 letters/numbers
+          </span>
+        </div>
+        {prefixError && <div style={{ fontSize: 11, color: '#e0a05a', marginTop: 6, fontFamily: 'var(--font-body)' }}>{prefixError}</div>}
+      </div>
+    </div>
+  )
+
+  const renderSelect = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Controls */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', letterSpacing: '0.1em', textTransform: 'uppercase', marginRight: 4 }}>
+          {checkedIds.size} selected
+        </span>
+        <SmallButton onClick={() => setCheckedIds(new Set(artworks.map(a => a.id)))}>Select all</SmallButton>
+        <SmallButton onClick={() => setCheckedIds(new Set())}>Deselect all</SmallButton>
+        {workType === 'photographs' && (
+          <SmallButton onClick={() => setCheckedIds(new Set(artworks.filter(a => a.mediaType === 'photography').map(a => a.id)))}>
+            Pre-select photographs
+          </SmallButton>
+        )}
+      </div>
+
+      {/* Grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))',
+        gap: 8,
+      }}>
+        {artworks.map(a => {
+          const checked = checkedIds.has(a.id)
+          const displayTitle = a.title || a.aiAnalysis?.suggestedTitle || ''
+          return (
+            <button
+              key={a.id}
+              onClick={() => toggleOne(a.id)}
+              style={{
+                position: 'relative',
+                background: checked ? 'rgba(201,169,110,0.12)' : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: 3,
+                padding: 0, cursor: 'pointer', overflow: 'hidden',
+                display: 'flex', flexDirection: 'column',
+                transition: 'border-color 0.15s, background 0.15s',
+                textAlign: 'left',
+              }}
+            >
+              <div style={{ width: '100%', aspectRatio: '1', overflow: 'hidden', background: '#111' }}>
+                {a.imageData.startsWith('http') ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={a.imageData} alt={displayTitle || 'artwork'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                ) : (
+                  <div style={{ width: '100%', height: '100%', background: 'var(--border)' }} />
+                )}
+              </div>
+              <div style={{
+                padding: '5px 6px',
+                fontSize: 10, color: displayTitle ? 'var(--text-dim)' : '#e0a05a',
+                fontFamily: 'var(--font-body)',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                lineHeight: 1.3,
+              }}>
+                {displayTitle || '⚠ No title'}
+              </div>
+              <div style={{
+                position: 'absolute', top: 5, right: 5,
+                width: 16, height: 16, borderRadius: 2,
+                background: checked ? 'var(--accent)' : 'rgba(0,0,0,0.5)',
+                border: `1px solid ${checked ? 'var(--accent)' : 'rgba(255,255,255,0.3)'}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'background 0.15s, border-color 0.15s',
+                pointerEvents: 'none',
+              }}>
+                {checked && (
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                    <path d="M1.5 4L3 5.5L6.5 2" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  const renderPreview = () => {
+    if (!costPreview || selectedArtworks.length === 0) {
+      return (
+        <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-dim)', fontSize: 13, fontFamily: 'var(--font-body)' }}>
+          No works selected — go back and select at least one.
+        </div>
+      )
+    }
+
+    const { totalApps, fee, totalFee, groups } = costPreview
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+        {/* Cost summary */}
+        <div style={{
+          padding: '16px 18px',
+          background: 'rgba(201,169,110,0.06)',
+          border: '1px solid var(--border)',
+          borderRadius: 3,
+        }}>
+          <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap', marginBottom: 12 }}>
+            <CostItem label="Works selected" value={String(selectedArtworks.length)} />
+            <CostItem label="Applications" value={String(totalApps)} />
+            <CostItem label="Fee per application" value={`$${fee}`} />
+            <CostItem label="Estimated total fee" value={`$${totalFee}`} accent />
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.6 }}>
+            Each application is a separate filing. You pay ${fee} per application at copyright.gov.
+            These are the U.S. Copyright Office&apos;s fees — ArtisTrust charges nothing for the export.
+          </div>
+        </div>
+
+        {/* Application breakdown */}
+        <div>
+          <SectionLabel>Package structure</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+            {groups.map(g => (
+              <div
+                key={g.appIndex}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '10px 14px',
+                  background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 2,
+                }}
+              >
+                <div style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'var(--font-body)', letterSpacing: '0.1em', textTransform: 'uppercase', minWidth: 100 }}>
+                  Application {g.appIndex}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text)', fontFamily: 'var(--font-body)', flex: 1 }}>
+                  {g.works.length} {g.works.length === 1 ? 'work' : 'works'}
+                  {' · '}
+                  {g.pasteBatches.length} paste {g.pasteBatches.length === 1 ? 'batch' : 'batches'}
+                  {' · '}
+                  codes {g.works[0].code}–{g.works[g.works.length - 1].code}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>
+                  ${fee}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Warnings */}
+        {worksWithNoTitle.length > 0 && (
+          <div style={{ padding: '10px 14px', background: 'rgba(224,160,90,0.08)', border: '1px solid rgba(224,160,90,0.25)', borderRadius: 2 }}>
+            <div style={{ fontSize: 11, color: '#e0a05a', fontFamily: 'var(--font-body)', lineHeight: 1.7 }}>
+              ⚠ {worksWithNoTitle.length} {worksWithNoTitle.length === 1 ? 'work has' : 'works have'} no title.
+              The file name will be used as the code reference. Edit these in your catalogue before submitting.
+            </div>
+          </div>
+        )}
+
+        {/* Disclaimer */}
+        <div style={{ padding: '10px 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 2 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.7 }}>
+            <strong style={{ color: 'var(--text)' }}>Disclaimer:</strong> This tool generates a submission-ready package.
+            ArtisTrust does not submit to copyright.gov on your behalf, does not provide legal advice, and is not
+            responsible for the outcome of any filing. For complex situations, consult a copyright attorney.
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Modal shell ───────────────────────────────────────────────────────────
+
+  const canProceedFromConfigure = prefix.length > 0 && !prefixError
+  const canProceedFromSelect = checkedIds.size > 0
 
   return (
     <div
@@ -171,7 +537,7 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
           borderRadius: 4,
           width: '100%',
           maxWidth: 860,
-          maxHeight: '88vh',
+          maxHeight: '90vh',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -186,10 +552,10 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
         }}>
           <div>
             <div style={{ fontSize: 13, fontFamily: 'var(--font-body)', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text)' }}>
-              Copyright Registration
+              Copyright Registration Package
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3, fontFamily: 'var(--font-body)' }}>
-              U.S. Copyright Office · Group Registration
+              U.S. Copyright Office · Group Registration · {artistName}
             </div>
           </div>
           <button
@@ -201,204 +567,67 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
           </button>
         </div>
 
-        {/* Tab bar */}
+        {/* Step indicator */}
         <div style={{
-          display: 'flex', gap: 0,
+          padding: '12px 24px',
           borderBottom: '1px solid var(--border)',
           flexShrink: 0,
-          padding: '0 24px',
         }}>
-          {(['photographs', '2d-visual-art'] as Tab[]).map(tab => (
+          <StepDots step={step} />
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px 24px' }}>
+          {step === 'configure' && renderConfigure()}
+          {step === 'select' && renderSelect()}
+          {step === 'preview' && renderPreview()}
+        </div>
+
+        {/* Footer nav */}
+        <div style={{
+          borderTop: '1px solid var(--border)',
+          padding: '14px 24px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: 12, flexShrink: 0,
+        }}>
+          <button
+            onClick={step === 'configure' ? onClose : () => setStep(step === 'preview' ? 'select' : 'configure')}
+            style={{
+              background: 'transparent', border: '1px solid var(--border)', borderRadius: 2,
+              padding: '7px 20px', color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+              fontSize: 11, letterSpacing: '0.12em', textTransform: 'uppercase', cursor: 'pointer',
+            }}
+          >
+            {step === 'configure' ? 'Cancel' : '← Back'}
+          </button>
+
+          {step !== 'preview' ? (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => step === 'configure' ? setStep('select') : setStep('preview')}
+              disabled={step === 'configure' ? !canProceedFromConfigure : !canProceedFromSelect}
               style={{
-                background: 'none', border: 'none', borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
-                color: activeTab === tab ? 'var(--accent)' : 'var(--text-dim)',
-                fontFamily: 'var(--font-body)', fontSize: 11, letterSpacing: '0.12em',
-                textTransform: 'uppercase', cursor: 'pointer',
-                padding: '12px 16px 10px', transition: 'color 0.15s',
-                marginBottom: -1,
+                background: (step === 'configure' ? canProceedFromConfigure : canProceedFromSelect) ? 'var(--accent)' : 'transparent',
+                border: '1px solid var(--accent)',
+                borderRadius: 2, padding: '7px 20px',
+                color: (step === 'configure' ? canProceedFromConfigure : canProceedFromSelect) ? 'var(--bg)' : 'var(--accent)',
+                fontFamily: 'var(--font-body)', fontSize: 11,
+                letterSpacing: '0.12em', textTransform: 'uppercase',
+                cursor: (step === 'configure' ? canProceedFromConfigure : canProceedFromSelect) ? 'pointer' : 'default',
+                opacity: (step === 'configure' ? canProceedFromConfigure : canProceedFromSelect) ? 1 : 0.4,
+                transition: 'all 0.15s',
               }}
             >
-              {tab === 'photographs' ? 'Photographs' : '2D Visual Art'}
+              {step === 'configure' ? 'Select works →' : `Review ${checkedIds.size} works →`}
             </button>
-          ))}
-        </div>
-
-        {/* Body — scrollable */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
-
-          {activeTab === '2d-visual-art' && (
-            <div style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              minHeight: 240, textAlign: 'center', gap: 12,
-            }}>
-              <svg width="36" height="36" viewBox="0 0 36 36" fill="none" style={{ opacity: 0.3 }}>
-                <rect x="4" y="4" width="28" height="28" rx="2" stroke="currentColor" strokeWidth="1.5"/>
-                <path d="M4 13h28M13 4v28" stroke="currentColor" strokeWidth="1.2" strokeDasharray="3 2"/>
-              </svg>
-              <div style={{ fontSize: 13, color: 'var(--text)', fontFamily: 'var(--font-body)', letterSpacing: '0.06em' }}>
-                Coming soon
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', maxWidth: 380, lineHeight: 1.7, fontFamily: 'var(--font-body)' }}>
-                We&apos;re researching the exact columns required for the U.S. Copyright Office Group Registration of
-                Visual Art Works (VA). This section will support groups of up to {GROUP_SIZE_2D} works per filing.
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'photographs' && (
-            <>
-              {/* Controls row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', letterSpacing: '0.1em', textTransform: 'uppercase', marginRight: 4 }}>
-                  {checkedIds.size} selected
-                </span>
-                <SmallButton onClick={selectAll}>Select all</SmallButton>
-                <SmallButton onClick={deselectAll}>Deselect all</SmallButton>
-                <SmallButton onClick={preSelectPhotographs}>Pre-select photographs</SmallButton>
-              </div>
-
-              {/* Group summary */}
-              {selectedArtworks.length > 0 && (
-                <div style={{
-                  background: 'rgba(201,169,110,0.06)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 3,
-                  padding: '12px 14px',
-                  marginBottom: 16,
-                  display: 'flex', flexDirection: 'column', gap: 8,
-                }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 2 }}>
-                    Filing groups ({GROUP_SIZE_PHOTO} per group · ${85} each)
-                  </div>
-                  {groups.map((group, gi) => (
-                    <div key={gi} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 12, color: 'var(--text)', fontFamily: 'var(--font-body)', minWidth: 72 }}>
-                        Group {gi + 1} — {group.length} {group.length === 1 ? 'work' : 'works'}
-                      </span>
-                      <button
-                        onClick={() => copyGroupTitles(group, gi)}
-                        style={{
-                          background: copiedGroup === gi ? 'rgba(201,169,110,0.18)' : 'transparent',
-                          border: '1px solid var(--border)',
-                          borderRadius: 2, padding: '3px 10px',
-                          color: copiedGroup === gi ? 'var(--accent)' : 'var(--text-dim)',
-                          fontFamily: 'var(--font-body)', fontSize: 10,
-                          letterSpacing: '0.1em', textTransform: 'uppercase',
-                          cursor: 'pointer', transition: 'all 0.15s',
-                        }}
-                      >
-                        {copiedGroup === gi ? '✓ Copied' : 'Copy titles for eCO'}
-                      </button>
-                      {group.some(a => !a.title && !a.aiAnalysis?.suggestedTitle) && (
-                        <span style={{ fontSize: 10, color: '#e0a05a', fontFamily: 'var(--font-body)' }}>
-                          ⚠ some works missing title
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                  {missingCount > 0 && (
-                    <div style={{ fontSize: 11, color: '#e0a05a', fontFamily: 'var(--font-body)', marginTop: 4 }}>
-                      {missingCount} {missingCount === 1 ? 'work' : 'works'} with no title will be flagged in the CSV — edit them before submitting.
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Artwork grid */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
-                gap: 8,
-              }}>
-                {artworks.map(a => {
-                  const checked = checkedIds.has(a.id)
-                  const displayTitle = a.title || a.aiAnalysis?.suggestedTitle || ''
-                  return (
-                    <button
-                      key={a.id}
-                      onClick={() => toggleOne(a.id)}
-                      style={{
-                        position: 'relative',
-                        background: checked ? 'rgba(201,169,110,0.12)' : 'rgba(255,255,255,0.03)',
-                        border: `1px solid ${checked ? 'var(--accent)' : 'var(--border)'}`,
-                        borderRadius: 3,
-                        padding: 0, cursor: 'pointer', overflow: 'hidden',
-                        display: 'flex', flexDirection: 'column',
-                        transition: 'border-color 0.15s, background 0.15s',
-                        textAlign: 'left',
-                      }}
-                    >
-                      {/* Thumbnail */}
-                      <div style={{ width: '100%', aspectRatio: '1', overflow: 'hidden', background: '#111' }}>
-                        {a.imageData.startsWith('http') ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={a.imageData}
-                            alt={displayTitle || 'artwork'}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                          />
-                        ) : (
-                          <div style={{ width: '100%', height: '100%', background: 'var(--border)' }} />
-                        )}
-                      </div>
-                      {/* Title */}
-                      <div style={{
-                        padding: '5px 6px',
-                        fontSize: 10, color: displayTitle ? 'var(--text-dim)' : '#e0a05a',
-                        fontFamily: 'var(--font-body)',
-                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                        lineHeight: 1.3,
-                      }}>
-                        {displayTitle || '⚠ No title'}
-                      </div>
-                      {/* Checkbox overlay */}
-                      <div style={{
-                        position: 'absolute', top: 5, right: 5,
-                        width: 16, height: 16, borderRadius: 2,
-                        background: checked ? 'var(--accent)' : 'rgba(0,0,0,0.5)',
-                        border: `1px solid ${checked ? 'var(--accent)' : 'rgba(255,255,255,0.3)'}`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        transition: 'background 0.15s, border-color 0.15s',
-                        pointerEvents: 'none',
-                      }}>
-                        {checked && (
-                          <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                            <path d="M1.5 4L3 5.5L6.5 2" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        )}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Footer */}
-        {activeTab === 'photographs' && (
-          <div style={{
-            borderTop: '1px solid var(--border)',
-            padding: '14px 24px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            gap: 12, flexShrink: 0,
-          }}>
-            <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.6 }}>
-              {selectedArtworks.length > 0
-                ? `Downloads ${groups.length} zip ${groups.length === 1 ? 'folder' : 'folders'} · each contains a title-template CSV + PASTE-INTO-ECO.txt + deposit images`
-                : 'Select at least one work to generate a package'}
-            </div>
+          ) : (
             <button
               onClick={handleGenerate}
               disabled={generating || selectedArtworks.length === 0}
               style={{
-                background: selectedArtworks.length === 0 ? 'transparent' : 'var(--accent)',
+                background: selectedArtworks.length > 0 ? 'var(--accent)' : 'transparent',
                 border: '1px solid var(--accent)',
-                borderRadius: 2, padding: '7px 20px',
-                color: selectedArtworks.length === 0 ? 'var(--accent)' : 'var(--bg)',
+                borderRadius: 2, padding: '7px 24px',
+                color: selectedArtworks.length > 0 ? 'var(--bg)' : 'var(--accent)',
                 fontFamily: 'var(--font-body)', fontSize: 11,
                 letterSpacing: '0.12em', textTransform: 'uppercase',
                 cursor: selectedArtworks.length === 0 || generating ? 'default' : 'pointer',
@@ -409,8 +638,8 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
             >
               {generating ? 'Generating…' : 'Generate & Download'}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Toast */}
@@ -429,28 +658,28 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
   )
 }
 
-function SmallButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <button
-      onClick={onClick}
-      style={{
-        background: 'transparent',
-        border: '1px solid var(--border)',
-        borderRadius: 2, padding: '4px 10px',
-        color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
-        fontSize: 10, letterSpacing: '0.09em', textTransform: 'uppercase',
-        cursor: 'pointer', transition: 'color 0.15s, border-color 0.15s',
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.color = 'var(--text)'
-        e.currentTarget.style.borderColor = 'var(--text-dim)'
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.color = 'var(--text-dim)'
-        e.currentTarget.style.borderColor = 'var(--border)'
-      }}
-    >
+    <div style={{
+      fontSize: 10, fontFamily: 'var(--font-body)', letterSpacing: '0.14em',
+      textTransform: 'uppercase', color: 'var(--text-dim)',
+    }}>
       {children}
-    </button>
+    </div>
+  )
+}
+
+function CostItem({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 3 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: accent ? 18 : 15, color: accent ? 'var(--accent)' : 'var(--text)', fontFamily: 'var(--font-body)', fontWeight: accent ? 500 : 400 }}>
+        {value}
+      </div>
+    </div>
   )
 }

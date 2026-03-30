@@ -430,3 +430,192 @@ describe('stats computed values', () => {
     expect(result.current.stats.waiting).toBe(0)
   })
 })
+
+// ─── Monthly limit & overage ──────────────────────────────────────────────────
+
+describe('monthly upload limit — free slots available', () => {
+  it('queues all files immediately when count is within the monthly limit', () => {
+    const { options } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      monthlyUploadsUsed: 10,
+      monthlyUploadLimit: 25,
+    }))
+
+    act(() => result.current.addFiles(makeFiles(5)))
+
+    // All 5 fit within the 15 remaining slots — no overage
+    expect(result.current.items).toHaveLength(5)
+    expect(result.current.pendingOverageCount).toBe(0)
+    expect(result.current.pendingOverageCost).toBe(0)
+  })
+
+  it('queues up to the remaining slots and holds the rest as overage', () => {
+    const { options } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      monthlyUploadsUsed: 22,
+      monthlyUploadLimit: 25,
+    }))
+
+    // 3 slots left; drop 7 files → 3 go in, 4 held
+    act(() => result.current.addFiles(makeFiles(7)))
+
+    expect(result.current.items).toHaveLength(3)
+    expect(result.current.pendingOverageCount).toBe(4)
+    expect(result.current.pendingOverageCost).toBeCloseTo(4 * 0.05, 5)
+  })
+
+  it('holds ALL files as overage when the monthly limit is already exhausted', () => {
+    const { options } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      monthlyUploadsUsed: 25,
+      monthlyUploadLimit: 25,
+    }))
+
+    act(() => result.current.addFiles(makeFiles(3)))
+
+    expect(result.current.items).toHaveLength(0)
+    expect(result.current.pendingOverageCount).toBe(3)
+    expect(result.current.pendingOverageCost).toBeCloseTo(3 * 0.05, 5)
+  })
+
+  it('queues all files without gating when monthlyUploadLimit is null (unlimited)', () => {
+    const { options } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      monthlyUploadsUsed: 999,
+      monthlyUploadLimit: null,
+    }))
+
+    act(() => result.current.addFiles(makeFiles(10)))
+
+    expect(result.current.items).toHaveLength(10)
+    expect(result.current.pendingOverageCount).toBe(0)
+  })
+
+  it('queues all files without gating when monthlyUploadLimit is undefined', () => {
+    const { options } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      // neither prop provided
+    }))
+
+    act(() => result.current.addFiles(makeFiles(6)))
+
+    expect(result.current.items).toHaveLength(6)
+    expect(result.current.pendingOverageCount).toBe(0)
+  })
+
+  it('accounts for already-queued items when computing remaining slots', () => {
+    const { options } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      monthlyUploadsUsed: 20,
+      monthlyUploadLimit: 25,
+    }))
+
+    // First batch uses 3 of the 5 remaining slots
+    act(() => result.current.addFiles(makeFiles(3)))
+    expect(result.current.items).toHaveLength(3)
+    expect(result.current.pendingOverageCount).toBe(0)
+
+    // Second batch: only 2 slots left
+    act(() => result.current.addFiles(makeFiles(5)))
+    expect(result.current.items).toHaveLength(5) // 3 + 2
+    expect(result.current.pendingOverageCount).toBe(3) // 3 overage from second batch
+  })
+})
+
+describe('monthly upload limit — overage confirmation', () => {
+  it('confirmOverage enqueues all held files and clears the pending state', async () => {
+    const { options } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      monthlyUploadsUsed: 25,
+      monthlyUploadLimit: 25,
+    }))
+
+    act(() => result.current.addFiles(makeFiles(3)))
+    expect(result.current.pendingOverageCount).toBe(3)
+    expect(result.current.items).toHaveLength(0)
+
+    act(() => result.current.confirmOverage())
+
+    expect(result.current.pendingOverageCount).toBe(0)
+    expect(result.current.pendingOverageCost).toBe(0)
+    expect(result.current.items).toHaveLength(3)
+
+    await waitFor(() => expect(result.current.stats.done).toBe(3), { timeout: 10_000 })
+    expect(result.current.stats.errors).toBe(0)
+  })
+
+  it('confirmOverage is a no-op when there are no pending overage files', () => {
+    const { options } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      monthlyUploadsUsed: 0,
+      monthlyUploadLimit: 25,
+    }))
+
+    act(() => result.current.confirmOverage())
+
+    expect(result.current.items).toHaveLength(0)
+    expect(result.current.pendingOverageCount).toBe(0)
+  })
+
+  it('cancelOverage discards held files and resets the pending state', () => {
+    const { options } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      monthlyUploadsUsed: 25,
+      monthlyUploadLimit: 25,
+    }))
+
+    act(() => result.current.addFiles(makeFiles(4)))
+    expect(result.current.pendingOverageCount).toBe(4)
+
+    act(() => result.current.cancelOverage())
+
+    expect(result.current.pendingOverageCount).toBe(0)
+    expect(result.current.pendingOverageCost).toBe(0)
+    expect(result.current.items).toHaveLength(0)
+  })
+
+  it('overage files confirmed after a split reach done state successfully', async () => {
+    const { options, onArtworkAdded } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      monthlyUploadsUsed: 24,
+      monthlyUploadLimit: 25,
+    }))
+
+    // 1 free slot, 2 overage
+    act(() => result.current.addFiles(makeFiles(3)))
+    expect(result.current.items).toHaveLength(1)
+    expect(result.current.pendingOverageCount).toBe(2)
+
+    act(() => result.current.confirmOverage())
+    expect(result.current.items).toHaveLength(3)
+
+    await waitFor(() => expect(result.current.stats.done).toBe(3), { timeout: 10_000 })
+    expect(onArtworkAdded).toHaveBeenCalledTimes(3)
+    expect(result.current.stats.errors).toBe(0)
+  })
+
+  it('pendingOverageCost rounds correctly for large overage counts', () => {
+    const { options } = makeOptions()
+    const { result } = renderHook(() => useUploadQueue({
+      ...options,
+      monthlyUploadsUsed: 25,
+      monthlyUploadLimit: 25,
+    }))
+
+    // 37 files × $0.05 = $1.85 exactly
+    act(() => result.current.addFiles(makeFiles(37)))
+
+    expect(result.current.pendingOverageCount).toBe(37)
+    expect(result.current.pendingOverageCost).toBeCloseTo(1.85, 5)
+  })
+})

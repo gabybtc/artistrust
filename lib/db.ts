@@ -384,3 +384,17 @@ export async function getArtworkCount(userId: string): Promise<number> {
   if (error) { dbErr('getArtworkCount', error); return 0 }
   return count ?? 0
 }
+
+/** Count artworks uploaded by this user in the current calendar month (UTC). */
+export async function getMonthlyUploadCount(userId: string): Promise<number> {
+  const now = new Date()
+  const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
+  const { count, error } = await supabase
+    .from('artworks')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .gte('uploaded_at', startOfMonth)
+
+  if (error) { dbErr('getMonthlyUploadCount', error); return 0 }
+  return count ?? 0
+}

@@ -102,7 +102,6 @@ export default function UploadDefaultsBar({
       border: '1px solid var(--border)',
       borderRadius: 2,
       background: 'var(--surface)',
-      overflow: 'hidden',
       transition: 'border-color 0.2s',
     }}>
       {/* Header row */}

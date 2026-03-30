@@ -21,30 +21,47 @@ export async function GET(req: NextRequest) {
     .eq('user_id', user.id)
     .single()
 
+  // Always cross-check beta_emails so users added after signup get beta access automatically
+  const { data: betaRow } = await admin
+    .from('beta_emails')
+    .select('email')
+    .eq('email', user.email ?? '')
+    .maybeSingle()
+  const isBeta = !!(betaRow || data?.is_beta)
+
   if (error || !data) {
     // Return default preserve plan if no subscription record found
     const fallback: UserSubscription = {
       userId: user.id,
-      plan: 'preserve',
+      plan: isBeta ? 'beta' : 'preserve',
       billingInterval: null,
       stripeCustomerId: null,
       stripeSubscriptionId: null,
       currentPeriodEnd: null,
-      isBeta: false,
+      isBeta,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
     return NextResponse.json(fallback)
   }
 
+  // Self-heal: if email is now in beta_emails but the DB row hasn't been updated yet, fix it
+  if (isBeta && (!data.is_beta || data.plan !== 'beta')) {
+    await admin.from('subscriptions').update({
+      plan: 'beta',
+      is_beta: true,
+      updated_at: new Date().toISOString(),
+    }).eq('user_id', user.id)
+  }
+
   const sub: UserSubscription = {
     userId: data.user_id,
-    plan: (data.is_beta ? 'beta' : data.plan) as Plan,
+    plan: isBeta ? 'beta' : (data.plan as Plan),
     billingInterval: (data.billing_interval as BillingInterval | null) ?? null,
     stripeCustomerId: data.stripe_customer_id ?? null,
     stripeSubscriptionId: data.stripe_subscription_id ?? null,
     currentPeriodEnd: data.current_period_end ?? null,
-    isBeta: data.is_beta,
+    isBeta,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   }

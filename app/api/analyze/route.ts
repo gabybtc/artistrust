@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
-import { getSubscription, getArtworkCount } from '@/lib/db'
-import { canUploadMore } from '@/lib/plans'
+import { getSubscription } from '@/lib/db'
+import { canUploadMore, MONTHLY_UPLOAD_LIMITS } from '@/lib/plans'
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -18,16 +18,24 @@ export async function POST(req: NextRequest) {
         const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey)
         const { data: { user } } = await admin.auth.getUser(authHeader.replace('Bearer ', ''))
         if (user) {
-          const [sub, count] = await Promise.all([
-            getSubscription(user.id),
-            getArtworkCount(user.id),
-          ])
+          const sub = await getSubscription(user.id)
           const plan = sub?.plan ?? 'preserve'
-          if (!canUploadMore(plan, count)) {
-            return NextResponse.json(
-              { error: 'PLAN_LIMIT', message: 'You have reached the 50-work limit for the Preserve plan. Upgrade to continue.' },
-              { status: 403 },
-            )
+          const limit = MONTHLY_UPLOAD_LIMITS[plan]
+          if (limit !== null) {
+            const now = new Date()
+            const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
+            const { count } = await admin
+              .from('artworks')
+              .select('id', { count: 'exact', head: true })
+              .eq('user_id', user.id)
+              .gte('uploaded_at', startOfMonth)
+            const monthlyCount = count ?? 0
+            if (!canUploadMore(plan, monthlyCount)) {
+              return NextResponse.json(
+                { error: 'MONTHLY_LIMIT', message: `You have used all ${limit} uploads for this month. Overage uploads cost $0.05 each.` },
+                { status: 403 },
+              )
+            }
           }
         }
       }
@@ -45,8 +53,8 @@ export async function POST(req: NextRequest) {
     const mediaType = (mediaTypeMatch ? mediaTypeMatch[1] : 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
 
     const response = await client.messages.create({
-      model: 'claude-opus-4-6',
-      max_tokens: 1500,
+      model: 'claude-haiku-4-5',
+      max_tokens: 600,
       messages: [
         {
           role: 'user',
