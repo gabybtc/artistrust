@@ -1202,7 +1202,7 @@ export default function Home() {
 
           {/* Grid / Cluster */}
           {viewMode === 'cluster' ? (
-            <ColourClusterView artworks={tagFiltered} onSelect={setSelected} />
+            <ColourClusterView artworks={tagFiltered} onSelect={setSelected} onUpdate={handleUpdate} />
           ) : tagFiltered.length > 0 ? (
             <div style={{
               display: 'grid',

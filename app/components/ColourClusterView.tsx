@@ -1,6 +1,6 @@
 "use client"
 import { useState, useRef, useCallback, useMemo } from 'react'
-import { Artwork } from '@/lib/types'
+import { Artwork, AiAnalysis } from '@/lib/types'
 
 // ── Cluster modes ─────────────────────────────────────────────────────────────
 
@@ -22,10 +22,11 @@ const CLUSTER_MODES: { id: ClusterMode; label: string }[] = [
 // better spread across all four quadrants (red/green × yellow/blue).
 
 function hexToRgb(hex: string): [number, number, number] | null {
-  const clean = hex.replace('#', '')
-  // Expand 3-digit hex (#abc → #aabbcc)
+  const clean = hex.trim().replace(/^#/, '')
+  // Expand 3-digit (#abc → #aabbcc); strip alpha from 8-digit (#rrggbbaa → #rrggbb)
   const full = clean.length === 3
     ? clean.split('').map(c => c + c).join('')
+    : clean.length === 8 ? clean.slice(0, 6)
     : clean
   const m = full.match(/^([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i)
   if (!m) return null
@@ -369,14 +370,57 @@ function isSuspectKey(mode: ClusterMode, key: string): boolean {
 interface Props {
   artworks: Artwork[]
   onSelect: (artwork: Artwork) => void
+  onUpdate?: (id: string, updates: Partial<Artwork>) => void
 }
 
-export default function ColourClusterView({ artworks, onSelect }: Props) {
+export default function ColourClusterView({ artworks, onSelect, onUpdate }: Props) {
   const [mode, setMode] = useState<ClusterMode>('colour')
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
   const [infoHovered, setInfoHovered] = useState(false)
+  const [reanalysing, setReanalysing] = useState(false)
+  const [reanalysisProgress, setReanalysisProgress] = useState<{ done: number; total: number } | null>(null)
   const wheelRef = useRef<HTMLDivElement>(null)
+
+  const reanalyseAll = useCallback(async (works: Artwork[]) => {
+    if (!onUpdate || reanalysing || works.length === 0) return
+    setReanalysing(true)
+    setReanalysisProgress({ done: 0, total: works.length })
+    for (let i = 0; i < works.length; i++) {
+      const artwork = works[i]
+      try {
+        // Fetch the image from its public URL and convert to a base64 data URL
+        const imgRes = await fetch(artwork.imageData)
+        if (!imgRes.ok) continue
+        const blob = await imgRes.blob()
+        const base64: string = await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsDataURL(blob)
+        })
+        const res = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageData: base64 }),
+        })
+        if (!res.ok) continue
+        const data = await res.json()
+        if (data.analysis) {
+          // Merge with existing aiAnalysis so non-palette fields survive if already set
+          const merged: AiAnalysis = { ...artwork.aiAnalysis, ...data.analysis }
+          onUpdate(artwork.id, { aiAnalysis: merged })
+        }
+      } catch {
+        // Skip failures silently — the work just stays in the no-palette strip
+      }
+      setReanalysisProgress({ done: i + 1, total: works.length })
+      // Small delay to avoid hammering the API
+      if (i < works.length - 1) await new Promise(r => setTimeout(r, 400))
+    }
+    setReanalysing(false)
+    setReanalysisProgress(null)
+  }, [onUpdate, reanalysing])
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = wheelRef.current?.getBoundingClientRect()
@@ -386,17 +430,21 @@ export default function ColourClusterView({ artworks, onSelect }: Props) {
 
   const handleMouseLeave = useCallback(() => setMousePos(null), [])
 
-  const { colourPlaced, colourUnplaced } = useMemo(() => {
+  const { colourPlaced, colourAchromatic, colourNoPalette } = useMemo(() => {
     const placed: Array<{ artwork: Artwork; bx: number; by: number; featureVec: Float32Array }> = []
-    const unplaced: Artwork[] = []
+    // achromatic: has palette data but every swatch is near-neutral
+    const achromatic: Artwork[] = []
+    // noPalette: never analysed, or analysed before colorPalette was added to the prompt
+    const noPalette: Artwork[] = []
     for (const artwork of artworks) {
       const palette = artwork.aiAnalysis?.colorPalette
-      if (!palette || palette.length === 0) { unplaced.push(artwork); continue }
+      if (!palette || palette.length === 0) { noPalette.push(artwork); continue }
       const centroid = paletteCentroid(palette)
-      // Gate on the most vivid individual swatch, not the centroid.
-      // This keeps complementary-palette works (e.g. red + cyan) on the wheel
-      // even when their average cancels to near-neutral.
-      if (!centroid || centroid.maxChroma < 14) { unplaced.push(artwork); continue }
+      // Use maxChroma (most vivid individual swatch) so complementary palettes
+      // (red + cyan averaging to neutral) still land on the wheel.
+      // Threshold of 4 ≈ the just-noticeable difference from a neutral grey;
+      // only true B&W / near-pure-grey works fall through to the achromatic strip.
+      if (!centroid || centroid.maxChroma < 4) { achromatic.push(artwork); continue }
       const featureVec = paletteFeatureVector(palette)
       const jitter = idJitter(artwork.id, 20)
       const { x, y } = labToPos(centroid.a, centroid.b)
@@ -407,7 +455,7 @@ export default function ColourClusterView({ artworks, onSelect }: Props) {
         by: Math.max(4, Math.min(BOARD - THUMB - 4, y + jitter.dy)),
       })
     }
-    return { colourPlaced: placed, colourUnplaced: unplaced }
+    return { colourPlaced: placed, colourAchromatic: achromatic, colourNoPalette: noPalette }
   }, [artworks])
 
   const spokePlaced = useMemo(() =>
@@ -445,7 +493,7 @@ export default function ColourClusterView({ artworks, onSelect }: Props) {
   const nearestPlaced = nearestId ? allPlaced.find(p => p.artwork.id === nearestId) ?? null : null
 
   const hoveredArtwork = allPlaced.find(p => p.artwork.id === nearestId)?.artwork
-    ?? (mode === 'colour' ? colourUnplaced.find(a => a.id === hoveredId) : undefined)
+    ?? (mode === 'colour' ? [...colourAchromatic, ...colourNoPalette].find(a => a.id === hoveredId) : undefined)
 
   const subtitles: Record<ClusterMode, string> = {
     colour:  'Works arranged by their dominant colour',
@@ -772,21 +820,21 @@ export default function ColourClusterView({ artworks, onSelect }: Props) {
         </div>
       )}
 
-      {/* Achromatic strip — colour mode only */}
-      {mode === 'colour' && colourUnplaced.length > 0 && (
+      {/* Achromatic strip — colour mode only, only truly greyscale works */}
+      {mode === 'colour' && colourAchromatic.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <p style={{
             fontFamily: 'var(--font-body)', fontSize: 11,
             letterSpacing: '0.12em', textTransform: 'uppercase',
             color: 'var(--muted)', textAlign: 'center', marginBottom: 10,
           }}>
-            Achromatic · grayscale · no palette
+            Achromatic · Grayscale
           </p>
           <div style={{
             display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center',
             maxWidth: BOARD,
           }}>
-            {colourUnplaced.map(artwork => {
+            {colourAchromatic.map(artwork => {
               const isHovered = hoveredId === artwork.id
               return (
                 <button
@@ -804,6 +852,82 @@ export default function ColourClusterView({ artworks, onSelect }: Props) {
                     transform: isHovered ? 'scale(1.1)' : 'scale(1)',
                     transition: 'transform 0.18s, outline 0.18s',
                     background: 'var(--card)',
+                  }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={artwork.imageData}
+                    alt={artwork.title || 'Artwork'}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* No-palette strip — works that haven't been (re-)analysed yet */}
+      {mode === 'colour' && colourNoPalette.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 10 }}>
+            <p style={{
+              fontFamily: 'var(--font-body)', fontSize: 11,
+              letterSpacing: '0.12em', textTransform: 'uppercase',
+              color: 'var(--muted)', margin: 0,
+            }}>
+              {reanalysisProgress
+                ? `Analysing ${reanalysisProgress.done} / ${reanalysisProgress.total}…`
+                : 'No colour data · re-analyse to place on wheel'}
+            </p>
+            {onUpdate && !reanalysing && (
+              <button
+                onClick={() => reanalyseAll(colourNoPalette)}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--accent-dim)',
+                  borderRadius: 2, padding: '3px 10px',
+                  color: 'var(--accent-dim)',
+                  fontFamily: 'var(--font-body)',
+                  fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  cursor: 'pointer', transition: 'all 0.15s', flexShrink: 0,
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.borderColor = 'var(--accent)'
+                  e.currentTarget.style.color = 'var(--accent)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.borderColor = 'var(--accent-dim)'
+                  e.currentTarget.style.color = 'var(--accent-dim)'
+                }}
+              >
+                Re-analyse all
+              </button>
+            )}
+          </div>
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center',
+            maxWidth: BOARD,
+          }}>
+            {colourNoPalette.map(artwork => {
+              const isHovered = hoveredId === artwork.id
+              return (
+                <button
+                  key={artwork.id}
+                  title={artwork.title || 'Untitled'}
+                  onClick={() => onSelect(artwork)}
+                  onMouseEnter={() => setHoveredId(artwork.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                  style={{
+                    width: THUMB, height: THUMB,
+                    padding: 0, border: 'none',
+                    borderRadius: 2, overflow: 'hidden', cursor: 'pointer',
+                    outline: isHovered ? '2px solid var(--accent)' : '1px solid rgba(255,255,255,0.1)',
+                    outlineOffset: isHovered ? 2 : 0,
+                    transform: isHovered ? 'scale(1.1)' : 'scale(1)',
+                    transition: 'transform 0.18s, outline 0.18s',
+                    background: 'var(--card)',
+                    opacity: 0.7,
                   }}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
