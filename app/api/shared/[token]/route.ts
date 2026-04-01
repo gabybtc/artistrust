@@ -12,7 +12,7 @@ export async function GET(
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!serviceRoleKey) {
     return NextResponse.json(
-      { error: 'Shared catalogue access is not configured on this server.' },
+      { error: 'Shared catalog access is not configured on this server.' },
       { status: 503 },
     )
   }

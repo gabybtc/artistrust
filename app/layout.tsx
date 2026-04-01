@@ -16,8 +16,8 @@ const epilogue = Epilogue({
 })
 
 export const metadata: Metadata = {
-  title: 'ArtisTrust — Art Catalogue',
-  description: 'A private catalogue for paintings and photographs',
+  title: 'ArtisTrust — Art Catalog',
+  description: 'A private catalog for paintings and photographs',
 }
 
 export default function RootLayout({

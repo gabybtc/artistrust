@@ -507,7 +507,7 @@ export default function Home() {
                     <button
                       onClick={handlePdfExport}
                       disabled={pdfGenerating || artworks.length === 0}
-                      title="Export PDF catalogue"
+                      title="Export PDF catalog"
                       style={{
                         background: 'transparent',
                         border: '1px solid var(--border)',
@@ -530,7 +530,7 @@ export default function Home() {
                         e.currentTarget.style.color = 'var(--text-dim)'
                       }}
                     >
-                      {pdfGenerating ? 'Generating…' : 'PDF Catalogue'}
+                      {pdfGenerating ? 'Generating…' : 'PDF Catalog'}
                     </button>
                   )}
                   {!subscription.loading && process.env.NEXT_PUBLIC_BILLING_ENABLED === 'true' && (
@@ -914,42 +914,71 @@ export default function Home() {
                   </button>
                 )}
 
-                {/* View mode toggle — grid / colour wheel */}
+                {/* View mode toggle — grid / color wheel */}
                 {tabArtworks.length > 0 && (
                   <div style={{ display: 'flex', gap: 2 }}>
-                    {(['grid', 'cluster'] as const).map(mode => (
-                      <button
-                        key={mode}
-                        title={mode === 'grid' ? 'Grid view' : 'Colour wheel'}
-                        onClick={() => setViewMode(mode)}
-                        style={{
-                          width: 28, height: 28,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          background: viewMode === mode ? 'rgba(201,169,110,0.1)' : 'transparent',
-                          border: `1px solid ${viewMode === mode ? 'var(--accent-dim)' : 'var(--border)'}`,
-                          borderRadius: 2, cursor: 'pointer',
-                          color: viewMode === mode ? 'var(--accent)' : 'var(--text-dim)',
-                          transition: 'all 0.15s',
-                        }}
-                      >
-                        {mode === 'grid' ? (
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                            <rect x="0.5" y="0.5" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
-                            <rect x="7" y="0.5" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
-                            <rect x="0.5" y="7" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
-                            <rect x="7" y="7" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
-                          </svg>
-                        ) : (
-                          <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-                            <circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" strokeWidth="1"/>
-                            <circle cx="6.5" cy="6.5" r="2" fill="currentColor" opacity="0.3"/>
-                            <line x1="6.5" y1="1" x2="6.5" y2="4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
-                            <line x1="11" y1="8.5" x2="8.4" y2="7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
-                            <line x1="2" y1="8.5" x2="4.6" y2="7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
-                          </svg>
-                        )}
-                      </button>
-                    ))}
+                    <button
+                      key="grid"
+                      title="Grid view"
+                      onClick={() => setViewMode('grid')}
+                      style={{
+                        height: 28,
+                        paddingInline: 8,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: viewMode === 'grid' ? 'rgba(201,169,110,0.1)' : 'transparent',
+                        border: `1px solid ${viewMode === 'grid' ? 'var(--accent-dim)' : 'var(--border)'}`,
+                        borderRadius: 2, cursor: 'pointer',
+                        color: viewMode === 'grid' ? 'var(--accent)' : 'var(--text-dim)',
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <rect x="0.5" y="0.5" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
+                        <rect x="7" y="0.5" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
+                        <rect x="0.5" y="7" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
+                        <rect x="7" y="7" width="4.5" height="4.5" stroke="currentColor" strokeWidth="1"/>
+                      </svg>
+                    </button>
+                    <button
+                      key="cluster"
+                      title="View your works arranged by colour"
+                      onClick={() => setViewMode('cluster')}
+                      style={{
+                        height: 28,
+                        paddingInline: 10,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        background: viewMode === 'cluster' ? 'rgba(201,169,110,0.1)' : 'rgba(201,169,110,0.04)',
+                        border: `1px solid ${viewMode === 'cluster' ? 'var(--accent)' : 'var(--accent-dim)'}`,
+                        borderRadius: 2, cursor: 'pointer',
+                        color: viewMode === 'cluster' ? 'var(--accent)' : 'var(--accent-dim)',
+                        fontFamily: 'var(--font-body)',
+                        fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
+                        transition: 'all 0.15s',
+                      }}
+                      onMouseEnter={e => {
+                        if (viewMode !== 'cluster') {
+                          e.currentTarget.style.background = 'rgba(201,169,110,0.1)'
+                          e.currentTarget.style.color = 'var(--accent)'
+                          e.currentTarget.style.borderColor = 'var(--accent)'
+                        }
+                      }}
+                      onMouseLeave={e => {
+                        if (viewMode !== 'cluster') {
+                          e.currentTarget.style.background = 'rgba(201,169,110,0.04)'
+                          e.currentTarget.style.color = 'var(--accent-dim)'
+                          e.currentTarget.style.borderColor = 'var(--accent-dim)'
+                        }
+                      }}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                        <circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" strokeWidth="1"/>
+                        <circle cx="6.5" cy="6.5" r="2" fill="currentColor" opacity="0.3"/>
+                        <line x1="6.5" y1="1" x2="6.5" y2="4" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                        <line x1="11" y1="8.5" x2="8.4" y2="7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                        <line x1="2" y1="8.5" x2="4.6" y2="7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                      </svg>
+                      Colour Wheel
+                    </button>
                   </div>
                 )}
               </div>
@@ -1137,12 +1166,12 @@ export default function Home() {
               {availableTags.map(tag => {
                 const ns = tag.split(':')[0]
                 const val = tag.slice(tag.indexOf(':') + 1)
-                const nsColours: Record<string, string> = {
+                const nsColors: Record<string, string> = {
                   medium: 'var(--accent)', subject: '#7eb8ff', content: '#aaaaaa',
-                  mood: '#c9a896', style: '#8ecfb0', colour: '#b8a9ff',
+                  mood: '#c9a896', style: '#8ecfb0', color: '#b8a9ff',
                   camera: 'var(--text-dim)', lens: 'var(--text-dim)', aperture: 'var(--text-dim)',
                 }
-                const colour = nsColours[ns] ?? '#aaaaaa'
+                const color = nsColors[ns] ?? '#aaaaaa'
                 const isActive = activeTags.has(tag)
                 return (
                   <button
@@ -1154,10 +1183,10 @@ export default function Home() {
                     })}
                     style={{
                       flexShrink: 0,
-                      background: isActive ? `color-mix(in srgb, ${colour} 15%, transparent)` : 'transparent',
-                      border: `1px solid ${isActive ? `color-mix(in srgb, ${colour} 40%, transparent)` : 'var(--border)'}`,
+                      background: isActive ? `color-mix(in srgb, ${color} 15%, transparent)` : 'transparent',
+                      border: `1px solid ${isActive ? `color-mix(in srgb, ${color} 40%, transparent)` : 'var(--border)'}`,
                       borderRadius: 2, padding: '4px 10px',
-                      color: isActive ? colour : 'var(--text-dim)',
+                      color: isActive ? color : 'var(--text-dim)',
                       fontFamily: 'var(--font-body)',
                       fontSize: 11, letterSpacing: '0.04em',
                       cursor: 'pointer', whiteSpace: 'nowrap',
@@ -1198,7 +1227,7 @@ export default function Home() {
                 fontSize: 20, fontStyle: 'italic', fontWeight: 400,
                 color: 'var(--muted)', marginBottom: 8,
               }}>
-                {`Your ${tabs.find(t => t.id === activeTab)?.label.toLowerCase() ?? 'catalogue'} awaits`}
+                {`Your ${tabs.find(t => t.id === activeTab)?.label.toLowerCase() ?? 'catalog'} awaits`}
               </p>
               <small style={{
                 fontFamily: 'var(--font-body)',
@@ -1228,7 +1257,7 @@ export default function Home() {
             onClose={() => setSelected(null)}
             onUpdate={(updates) => handleUpdate(selected.id, updates)}
             onDelete={() => handleDelete(selected.id)}
-            onSaved={() => showToast('Saved to catalogue')}
+            onSaved={() => showToast('Saved to catalog')}
             onTogglePublic={(isPublic) => handleTogglePublic(selected.id, isPublic)}
             onSetDefault={uploadDefaults.setDefault}
             canSharePortfolio={subscription.canSharePortfolio}
@@ -1247,6 +1276,7 @@ export default function Home() {
       {copyrightModalOpen && (
         <CopyrightExportModal
           artworks={artworks}
+          tabs={tabs}
           initialSelected={copyrightInitialSelected}
           artistName={copyrightArtistName}
           onClose={() => setCopyrightModalOpen(false)}

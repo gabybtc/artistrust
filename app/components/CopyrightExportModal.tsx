@@ -1,20 +1,24 @@
 "use client"
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import type { Artwork } from '@/lib/types'
+import type { Tab } from '@/lib/types'
 import type { Plan } from '@/lib/plans'
 import { canExportCopyright } from '@/lib/plans'
 import {
   generateCopyrightPackage,
   initialsFromName,
   buildApplicationGroups,
+  getBatchSize,
+  getFilingFee,
+  titleToDepositName,
   BATCH_SIZE,
-  FILING_FEE,
   type WorkType,
   type PublishedStatus,
 } from '@/lib/copyrightPackage'
 
 interface Props {
   artworks: Artwork[]
+  tabs: Tab[]
   initialSelected: Set<string>
   artistName: string
   onClose: () => void
@@ -146,7 +150,7 @@ function StepDots({ step }: { step: Step }) {
 
 // ─── Main modal ───────────────────────────────────────────────────────────────
 
-export default function CopyrightExportModal({ artworks, initialSelected, artistName, onClose, plan = 'preserve', onUpgradeClick }: Props) {
+export default function CopyrightExportModal({ artworks, tabs, initialSelected, artistName, onClose, plan = 'preserve', onUpgradeClick }: Props) {
   const allowed = canExportCopyright(plan)
   if (!allowed) return <UpgradeGate onClose={onClose} onUpgradeClick={onUpgradeClick} />
 
@@ -189,12 +193,15 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
   const costPreview = useMemo(() => {
     if (selectedArtworks.length === 0) return null
     const dummySizes = new Map<string, number>()
-    const groups = buildApplicationGroups(selectedArtworks, selectedArtworks.map((_, i) => `${prefix}${String(i + 1).padStart(3, '0')}`), workType, dummySizes)
+    const previewCodes = workType === '2d-visual-art'
+      ? selectedArtworks.map(a => titleToDepositName(a.title || a.aiAnalysis?.suggestedTitle || 'Untitled'))
+      : selectedArtworks.map((_, i) => `${prefix}${String(i + 1).padStart(3, '0')}`)
+    const groups = buildApplicationGroups(selectedArtworks, previewCodes, workType, dummySizes, publishedStatus)
     const totalApps = groups.length
-    const fee = FILING_FEE[workType]
+    const fee = getFilingFee(workType, publishedStatus)
     const totalPasteBatches = groups.reduce((sum, g) => sum + g.pasteBatches.length, 0)
     return { totalApps, fee, totalFee: totalApps * fee, totalPasteBatches, groups }
-  }, [selectedArtworks, workType, prefix])
+  }, [selectedArtworks, workType, publishedStatus, prefix])
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const toggleOne = (id: string) => {
@@ -251,7 +258,7 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
         <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
           {([
             { id: 'photographs', label: 'Photographs', sub: `Up to ${BATCH_SIZE.photographs} per application` },
-            { id: '2d-visual-art', label: 'Paintings & Visual Art', sub: `Up to ${BATCH_SIZE['2d-visual-art']} per application` },
+            { id: '2d-visual-art', label: 'Paintings & Visual Art', sub: `Up to ${getBatchSize('2d-visual-art', publishedStatus)} per application` },
           ] as const).map(opt => (
             <button
               key={opt.id}
@@ -274,6 +281,17 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
             </button>
           ))}
         </div>
+        {workType === '2d-visual-art' && (
+          <div style={{ marginTop: 10, padding: '12px 14px', background: 'rgba(201,169,110,0.05)', border: '1px solid rgba(201,169,110,0.2)', borderRadius: 2 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.75 }}>
+              Group Registration of Unpublished Works (GRUW) for visual artworks costs $55 per 10 unpublished works,
+              while Group Registration of 2D (GR2D) is $85 per 20 published works. For a catalogue of 500 paintings
+              that could run to $2,750 or more, so we&apos;d recommend focusing on your most significant or valuable
+              works first — pieces you&apos;d want to protect if someone reproduced them commercially. You can always
+              register more works in future batches.
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Published status */}
@@ -319,7 +337,8 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
         )}
       </div>
 
-      {/* Code prefix */}
+      {/* Code prefix — photographs only; visual art files are named directly from titles */}
+      {workType !== '2d-visual-art' && (
       <div>
         <SectionLabel>Reference code prefix</SectionLabel>
         <p style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.7, margin: '6px 0 10px' }}>
@@ -347,6 +366,7 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
         </div>
         {prefixError && <div style={{ fontSize: 11, color: '#e0a05a', marginTop: 6, fontFamily: 'var(--font-body)' }}>{prefixError}</div>}
       </div>
+      )}
     </div>
   )
 
@@ -359,11 +379,18 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
         </span>
         <SmallButton onClick={() => setCheckedIds(new Set(artworks.map(a => a.id)))}>Select all</SmallButton>
         <SmallButton onClick={() => setCheckedIds(new Set())}>Deselect all</SmallButton>
-        {workType === 'photographs' && (
-          <SmallButton onClick={() => setCheckedIds(new Set(artworks.filter(a => a.mediaType === 'photography').map(a => a.id)))}>
-            Pre-select photographs
-          </SmallButton>
-        )}
+        {tabs.map(tab => {
+          const count = artworks.filter(a => (a.mediaType ?? tabs[0]?.id) === tab.id).length
+          if (count === 0) return null
+          return (
+            <SmallButton
+              key={tab.id}
+              onClick={() => setCheckedIds(new Set(artworks.filter(a => (a.mediaType ?? tabs[0]?.id) === tab.id).map(a => a.id)))}
+            >
+              Select {tab.label} ({count})
+            </SmallButton>
+          )
+        })}
       </div>
 
       {/* Grid */}
@@ -443,6 +470,16 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
+        {/* Cost warning — visual art only */}
+        {workType === '2d-visual-art' && (
+          <div style={{ padding: '12px 14px', background: 'rgba(224,160,90,0.08)', border: '1px solid rgba(224,160,90,0.25)', borderRadius: 2 }}>
+            <div style={{ fontSize: 11, color: '#e0a05a', fontFamily: 'var(--font-body)', lineHeight: 1.75 }}>
+              ⚠ Registering {selectedArtworks.length} painting{selectedArtworks.length === 1 ? '' : 's'} will require {totalApps} application{totalApps === 1 ? '' : 's'} at ${fee} each = ${totalFee} total.
+              We recommend selecting only your most important works — pieces you&apos;d want to protect if someone reproduced them commercially.
+            </div>
+          </div>
+        )}
+
         {/* Cost summary */}
         <div style={{
           padding: '16px 18px',
@@ -476,14 +513,20 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
                 }}
               >
                 <div style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'var(--font-body)', letterSpacing: '0.1em', textTransform: 'uppercase', minWidth: 100 }}>
-                  Application {g.appIndex}
+                  {workType === '2d-visual-art' ? `Batch ${g.appIndex}` : `Application ${g.appIndex}`}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text)', fontFamily: 'var(--font-body)', flex: 1 }}>
                   {g.works.length} {g.works.length === 1 ? 'work' : 'works'}
-                  {' · '}
-                  {g.pasteBatches.length} paste {g.pasteBatches.length === 1 ? 'batch' : 'batches'}
-                  {' · '}
-                  codes {g.works[0].code}–{g.works[g.works.length - 1].code}
+                  {workType === '2d-visual-art' ? (
+                    <span style={{ color: 'var(--text-dim)' }}>{' · '}Reference_Sheet.csv + Deposit_Images.zip</span>
+                  ) : (
+                    <>
+                      {' · '}
+                      {g.pasteBatches.length} paste {g.pasteBatches.length === 1 ? 'batch' : 'batches'}
+                      {' · '}
+                      codes {g.works[0].code}–{g.works[g.works.length - 1].code}
+                    </>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>
                   ${fee}
@@ -517,7 +560,7 @@ export default function CopyrightExportModal({ artworks, initialSelected, artist
 
   // ── Modal shell ───────────────────────────────────────────────────────────
 
-  const canProceedFromConfigure = prefix.length > 0 && !prefixError
+  const canProceedFromConfigure = workType === '2d-visual-art' || (prefix.length > 0 && !prefixError)
   const canProceedFromSelect = checkedIds.size > 0
 
   return (

@@ -78,12 +78,12 @@ export async function POST(req: NextRequest) {
   "colorPalette": ["#hex1", "#hex2", "#hex3", "#hex4", "#hex5"],
   "suggestedTitle": "A poetic, concise suggested title for this work (2-5 words)",
   "tags": [
-    "REQUIRED — exactly one medium tag: e.g. medium:oil on canvas, medium:watercolour, medium:35mm film, medium:digital photography, medium:acrylic, medium:pencil, medium:charcoal",
+    "REQUIRED — exactly one medium tag: e.g. medium:oil on canvas, medium:watercolor, medium:35mm film, medium:digital photography, medium:acrylic, medium:pencil, medium:charcoal",
     "OPTIONAL subject (1-2): subject:portrait, subject:landscape, subject:still life, subject:abstract, subject:figure, subject:cityscape, subject:seascape, subject:interior",
     "OPTIONAL content (1-5 visible elements): content:woman, content:tree, content:mountain, content:flowers, content:ocean, content:building, content:crowd, content:animal",
     "OPTIONAL mood (1-2): mood:serene, mood:melancholic, mood:joyful, mood:dramatic, mood:intimate, mood:mysterious, mood:raw, mood:contemplative",
     "OPTIONAL style tags (1-3): style:impressionist, style:expressionist, style:realist, style:gestural, style:minimalist, style:painterly, style:abstract, style:figurative",
-    "OPTIONAL colour (1-2): colour:warm, colour:cool, colour:muted, colour:high contrast, colour:monochromatic, colour:dark, colour:light, colour:black and white"
+    "OPTIONAL color (1-2): color:warm, color:cool, color:muted, color:high contrast, color:monochromatic, color:dark, color:light, color:black and white"
   ]
 }
 

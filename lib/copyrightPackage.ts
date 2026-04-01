@@ -24,6 +24,33 @@ export const FILING_FEE: Record<WorkType, number> = {
 export type WorkType = 'photographs' | '2d-visual-art'
 export type PublishedStatus = 'unpublished' | 'published'
 
+/** Effective works per application (GRUW visual art = 10, GR2D published = 20, photos = 750) */
+export function getBatchSize(workType: WorkType, publishedStatus: PublishedStatus): number {
+  if (workType === '2d-visual-art') return publishedStatus === 'published' ? 20 : 10
+  return BATCH_SIZE[workType]
+}
+
+/** Effective filing fee per application (GR2D published visual art = $85, all others = $55) */
+export function getFilingFee(workType: WorkType, publishedStatus: PublishedStatus): number {
+  if (workType === '2d-visual-art' && publishedStatus === 'published') return 85
+  return FILING_FEE[workType]
+}
+
+/**
+ * Convert an artwork title to a deposit image filename stem.
+ * e.g. "Evening Light" → "Evening_Light", "Study No. 4" → "Study_No_4"
+ */
+export function titleToDepositName(title: string): string {
+  return (
+    title
+      .trim()
+      .replace(/\s+/g, '_')
+      .replace(/[^\w\-]/g, '')
+      .replace(/_{2,}/g, '_')
+      .replace(/^_|_$/g, '')
+  ) || 'Untitled'
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Derive initials from a full name, e.g. "Ricardo Betancourt" → "RB" */
@@ -80,8 +107,9 @@ export function buildApplicationGroups(
   codes: string[],
   workType: WorkType,
   imageSizes: Map<string, number>,  // artwork.id → byte size (0 if unknown)
+  publishedStatus: PublishedStatus = 'unpublished',
 ): ApplicationGroup[] {
-  const maxPerApp = BATCH_SIZE[workType]
+  const maxPerApp = getBatchSize(workType, publishedStatus)
   const groups: ApplicationGroup[] = []
   let i = 0
   let appIndex = 1
@@ -112,36 +140,132 @@ export function buildApplicationGroups(
   return groups
 }
 
+// ─── Filename sanitiser ───────────────────────────────────────────────────────
+
+/**
+ * Strip trailing/leading spaces, collapse internal runs of spaces to a single
+ * underscore, and remove characters that are problematic on most filesystems or
+ * at the Copyright Office upload portal.
+ */
+export function sanitizeFileName(name: string): string {
+  return name
+    .trim()
+    .replace(/\s+/g, '_')          // spaces → underscore
+    .replace(/[^\w.\-]/g, '')      // keep word chars, dots, hyphens only
+    .replace(/_{2,}/g, '_')        // collapse consecutive underscores
+}
+
+// ─── Medium simplifier ────────────────────────────────────────────────────────
+
+/**
+ * Produce a short, consistent medium string suitable for a copyright filing.
+ * If the artist entered a material manually, use that directly.
+ * Otherwise derive from the AI medium by taking only the text before any
+ * parenthesis, " with ", " — ", or em-dash, then trim.
+ */
+export function simplifyCopyrightMedium(artwork: Artwork): string {
+  const raw = artwork.material?.trim() || artwork.aiAnalysis?.medium?.trim() || ''
+  if (!raw) return ''
+  // If it came from the artist's own field it's usually already short — return as-is
+  if (artwork.material?.trim()) return artwork.material.trim()
+  // Strip verbose qualifiers from AI description
+  return raw
+    .split(/\s*[\(,]|\s+with\s|\s+—\s|—/)[0]
+    .trim()
+}
+
 // ─── CSV Reference Template ───────────────────────────────────────────────────
 
 function buildReferenceCsv(
   works: Array<{ artwork: Artwork; code: string }>,
+  artistName: string,
+  workType: WorkType,
   publishedStatus: PublishedStatus,
+  date: string,
 ): string {
-  const headers = [
+  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`
+
+  const appTypeLabel = publishedStatus === 'published'
+    ? (workType === 'photographs' ? 'Published Photographs' : 'Published Two-Dimensional Artwork')
+    : (workType === 'photographs' ? 'Unpublished Photographs' : 'Unpublished Two-Dimensional Artwork')
+
+  // Header block (written as comment rows so it doesn't interfere with data columns)
+  const headerBlock = [
+    [`"ArtisTrust Copyright Export \u2014 Reference Template"`, '', '', '', '', ''],
+    [escape(`Artist: ${artistName}`), '', '', '', '', ''],
+    [escape(`Application type: ${appTypeLabel}`), '', '', '', '', ''],
+    [`"Case #: _________________  (fill in after starting your application)"`, '', '', '', '', ''],
+    [escape(`Total works: ${works.length}`), '', '', '', '', ''],
+    [escape(`Date exported: ${date}`), '', '', '', '', ''],
+    ['', '', '', '', '', ''],  // blank spacer row
+  ].map(row => row.join(','))
+
+  const columnHeaders = [
     'Code',
     'Original Title',
     'File Name',
     'Year',
     'Medium',
     'Published / Unpublished',
-    'Case Number (fill in after starting application)',
   ]
-  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`
+
   const rows = works.map(({ artwork: a, code }) => {
     const title = a.title || a.aiAnalysis?.suggestedTitle || a.fileName || 'Untitled'
-    const medium = a.material || a.aiAnalysis?.medium || ''
+    const medium = simplifyCopyrightMedium(a)
     return [
       code,
       title,
-      a.fileName || '',
+      sanitizeFileName(a.fileName || ''),
       a.year || '',
       medium,
       publishedStatus === 'published' ? 'Published' : 'Unpublished',
-      '',
     ].map(escape).join(',')
   })
-  return [headers.map(escape).join(','), ...rows].join('\r\n')
+
+  return [...headerBlock, columnHeaders.map(escape).join(','), ...rows].join('\r\n')
+}
+
+// ─── Visual art per-batch reference sheet ────────────────────────────────────
+
+function buildVisualArtReferenceSheet(
+  group: ApplicationGroup,
+  filenameMap: Map<string, string>,  // code → full filename with ext e.g. "Evening_Light.jpg"
+  artistName: string,
+  publishedStatus: PublishedStatus,
+  totalGroups: number,
+  date: string,
+): string {
+  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`
+  const appTypeLabel = publishedStatus === 'published'
+    ? 'Published Two-Dimensional Artwork'
+    : 'Unpublished Two-Dimensional Artwork'
+
+  const headerBlock = [
+    [`"ArtisTrust Copyright Export \u2014 Reference Template"`, ''],
+    [escape(`Artist: ${artistName}`), ''],
+    [escape(`Application type: ${appTypeLabel} \u2014 Batch ${group.appIndex} of ${totalGroups}`), ''],
+    [escape(`Works in this batch: ${group.works.length}`), ''],
+    [escape(`Date exported: ${date}`), ''],
+    ['', ''],
+    [
+      '"The title you copy and paste from the Reference sheet and the image file name will look slightly different \u2014 don\'t worry, this is correct."',
+      '',
+    ],
+    [
+      '"The Copyright Office requires spaces in titles and underscores in file names. They will match automatically in their system."',
+      '',
+    ],
+    ['', ''],
+    ['"Type this as the title"', '"Upload this file"'],
+  ].map(row => row.join(','))
+
+  const rows = group.works.map(({ artwork: a, code }) => {
+    const title = a.title || a.aiAnalysis?.suggestedTitle || a.fileName?.replace(/\.[^.]+$/, '') || 'Untitled'
+    const filename = filenameMap.get(code) ?? `${code}.jpg`
+    return [escape(title), escape(filename)].join(',')
+  })
+
+  return [...headerBlock, ...rows].join('\r\n')
 }
 
 // ─── Paste-string text file ───────────────────────────────────────────────────
@@ -234,9 +358,10 @@ WHAT'S IN THIS ZIP
       contains a batch pre-calculated to stay within the 1,995-character
       limit. The number to select from the dropdown is labelled clearly.
 
-    Images/
-      Your deposit images renamed to their codes (e.g. RB001.jpg).
-      Upload this folder's contents as your deposit copies.
+    Deposit_Images_Batch_X.zip  (or Deposit_Images.zip if one batch)
+      Your deposit images renamed to their codes (e.g. RB001.jpg),
+      packaged as a ZIP ready to drag and drop into the copyright.gov
+      upload box. One ZIP per paste batch.
 
 ${'━'.repeat(64)}
 
@@ -268,8 +393,10 @@ STEP 5 — Titles screen (paste your codes)
   Select the count shown ("Number to select from dropdown") and click Save.
 ${totalApps > 1 || groups.some(g => g.pasteBatches.length > 1) ? `  Repeat for each Paste_Batch file within this application.\n` : ''}
 STEP 6 — Upload deposit images
-  Upload the contents of the Images/ folder for Application 1.
-  Accepted formats: JPEG, PNG, GIF, TIFF.
+  Drag and drop Deposit_Images.zip (or Deposit_Images_Batch_1.zip) into
+  the copyright.gov upload box for this batch.
+  Repeat for each Deposit_Images_Batch_X.zip if there are multiple batches.
+  Accepted formats inside the ZIP: JPEG, PNG, GIF, TIFF.
 ${totalApps > 1 ? `
 STEP 7 — Additional applications
   If you have more than one Application folder, start a new application
@@ -282,6 +409,134 @@ STEP ${totalApps > 1 ? '8' : '7'} — Pay and submit
   Processing typically takes 3–8 months for online filings.
 
 STEP ${totalApps > 1 ? '9' : '8'} — Receive your certificate
+  The Copyright Office mails an official Certificate of Registration.
+  Store it safely — it is your legal proof of ownership.
+  Enter the registration number in each artwork's record in ArtisTrust.
+
+${'━'.repeat(64)}
+
+USEFUL LINKS
+────────────
+  eCO system:           https://eco.copyright.gov
+  Help center:          https://www.copyright.gov/help/
+  Copyright Office tel: 1-877-476-0778
+`
+}
+
+// ─── Visual art submission guide ─────────────────────────────────────────────
+
+function buildVisualArtSubmissionGuide(
+  artistName: string,
+  publishedStatus: PublishedStatus,
+  groups: ApplicationGroup[],
+  totalWorks: number,
+  date: string,
+): string {
+  const pubLabel = publishedStatus === 'published' ? 'Published' : 'Unpublished'
+  const formType = publishedStatus === 'published'
+    ? 'Group Registration of Two-Dimensional Artwork (GR2D) — Published'
+    : 'Group Registration of Unpublished Works (GRUW) — Visual Art'
+  const fee = getFilingFee('2d-visual-art', publishedStatus)
+  const maxPerApp = getBatchSize('2d-visual-art', publishedStatus)
+  const totalBatches = groups.length
+  const totalFee = totalBatches * fee
+
+  const batchSummary = groups.map(g =>
+    `  Batch ${g.appIndex}: ${g.works.length} work${g.works.length === 1 ? '' : 's'}`
+  ).join('\n')
+
+  return `ARTISTRUST — COPYRIGHT SUBMISSION GUIDE
+For: ${artistName}
+Generated: ${date}
+${'━'.repeat(64)}
+
+DISCLAIMER
+──────────
+This guide is for informational purposes only and does not constitute
+legal advice. ArtisTrust does not submit to copyright.gov on your
+behalf and is not responsible for the outcome of any filing.
+For complex situations, consult a copyright attorney.
+
+${'━'.repeat(64)}
+
+PACKAGE SUMMARY
+───────────────
+  Works included:   ${totalWorks}
+  Type of work:     Two-Dimensional Artwork
+  Status:           ${pubLabel}
+  Form type:        ${formType}
+  Batches:          ${totalBatches}
+  Fee per batch:    $${fee}
+  Estimated total:  $${totalFee}
+
+${batchSummary}
+
+${'━'.repeat(64)}
+
+WHAT'S IN THIS ZIP
+──────────────────
+  Submission_Guide.txt  ← you are reading this
+
+  Batch_X/
+    Reference_Sheet.csv
+      Lists the ${maxPerApp} works in this batch. For each work it shows
+      the exact title to enter in the form, the matching image filename,
+      year and medium.
+
+      NOTE: The title (e.g. "Evening Light") and the filename
+      (e.g. "Evening_Light.jpg") will look slightly different —
+      this is correct. The Copyright Office requires spaces in titles
+      and underscores in file names. They match automatically.
+
+    Deposit_Images.zip
+      Image files named with underscores to match their titles
+      (e.g. Evening_Light.jpg). Drag and drop directly into the
+      copyright.gov upload box when prompted for deposit copies.
+
+${'━'.repeat(64)}
+
+STEP-BY-STEP INSTRUCTIONS
+──────────────────────────
+
+STEP 1 — Create an account
+  Go to: https://eco.copyright.gov
+  Click "If you are a new user, click here to register."
+
+STEP 2 — Start a new application
+  Log in and click "Register a New Claim."
+  Select: ${formType}
+
+STEP 3 — Note your Case Number
+  The system assigns a Case Number as soon as you start.
+  Write it down — you will need it if you check filing status later.
+
+STEP 4 — Complete author and claimant fields
+  Author:    ${artistName}
+  Claimant:  ${artistName} (unless you have transferred rights)
+  Rights and Permissions: your studio or personal email address
+
+STEP 5 — Add titles (one per work)
+  Open Reference_Sheet.csv for Batch 1.
+  On the Titles screen, add each title individually, exactly as shown
+  in the "Type this as the title" column.
+  Do not add underscores — copy the title text exactly as written.
+
+STEP 6 — Upload deposit images
+  When prompted for deposit images, drag and drop Deposit_Images.zip
+  from Batch 1 directly into the upload box.
+  The system matches filenames to titles automatically.
+${totalBatches > 1 ? `
+STEP 7 — Additional batches
+  Each batch is a separate $${fee} application. Repeat Steps 2–6
+  for each Batch_X folder. Open a fresh application for each one.
+` : ''}
+STEP ${totalBatches > 1 ? '8' : '7'} — Pay and submit
+  Fee: $${fee} per application × ${totalBatches} = $${totalFee} total.
+  Pay by credit/debit card or Copyright Office deposit account.
+  You will receive a confirmation email with your Service Request Number.
+  Processing typically takes 3–8 months for online filings.
+
+STEP ${totalBatches > 1 ? '9' : '8'} — Receive your certificate
   The Copyright Office mails an official Certificate of Registration.
   Store it safely — it is your legal proof of ownership.
   Enter the registration number in each artwork's record in ArtisTrust.
@@ -313,7 +568,21 @@ export async function generateCopyrightPackage(
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
 
   // 1. Generate codes
-  const codes = generateCodes(prefix, artworks.length)
+  //    Photographs → sequential prefix codes (RB001, RB002, …)
+  //    Visual art  → title-based stems (Evening_Light, Study_No_4, …)
+  let codes: string[]
+  if (workType === '2d-visual-art') {
+    const seen = new Map<string, number>()
+    codes = artworks.map(a => {
+      const title = a.title || a.aiAnalysis?.suggestedTitle || a.fileName?.replace(/\.[^.]+$/, '') || 'Untitled'
+      const base = titleToDepositName(title)
+      const count = seen.get(base) ?? 0
+      seen.set(base, count + 1)
+      return count === 0 ? base : `${base}_${count + 1}`
+    })
+  } else {
+    codes = generateCodes(prefix, artworks.length)
+  }
 
   // 2. Fetch images + measure sizes
   type FetchResult = { id: string; blob: Blob | null; ext: string }
@@ -340,42 +609,85 @@ export async function generateCopyrightPackage(
   }))
 
   // 3. Build application groups (respects batch size + 500 MB image limit)
-  const groups = buildApplicationGroups(artworks, codes, workType, imageSizes)
+  const groups = buildApplicationGroups(artworks, codes, workType, imageSizes, publishedStatus)
 
-  // 4. Assemble all works with codes in order for the reference CSV
-  const allWorks = groups.flatMap(g => g.works)
-
-  // 5. Build zip
+  // 4. Build zip
   const root = new JSZip()
 
-  // Reference CSV at root
-  root.file('Reference_Template.csv', buildReferenceCsv(allWorks, publishedStatus))
+  // Submission guide at root (different text for photos vs visual art)
+  root.file('Submission_Guide.txt',
+    workType === '2d-visual-art'
+      ? buildVisualArtSubmissionGuide(artistName, publishedStatus, groups, artworks.length, date)
+      : buildSubmissionGuide(artistName, workType, publishedStatus, groups, artworks.length, date),
+  )
 
-  // Submission guide at root
-  root.file('Submission_Guide.txt', buildSubmissionGuide(
-    artistName, workType, publishedStatus, groups, artworks.length, date,
-  ))
+  if (workType === '2d-visual-art') {
+    // ── Visual art: one Batch_X folder per group of 10 (or 20 published) works ──
+    // Each folder contains a Reference_Sheet.csv and a Deposit_Images.zip.
+    // No paste batches — the artist types each title individually into eCO.
+    for (const group of groups) {
+      const batchFolder = root.folder(`Batch_${group.appIndex}`)!
 
-  // One folder per application
-  for (const group of groups) {
-    const appLabel = `Application_${group.appIndex}`
-    const appFolder = root.folder(appLabel)!
-    const imagesFolder = appFolder.folder('Images')!
+      // Build code → "filename.ext" map for this batch (extension known after fetch)
+      const filenameMap = new Map<string, string>()
+      for (const { artwork, code } of group.works) {
+        const result = fetched.get(artwork.id)
+        const ext = result?.blob ? result.ext : 'jpg'
+        filenameMap.set(code, `${code}.${ext}`)
+      }
 
-    // Paste batch files
-    for (let bi = 0; bi < group.pasteBatches.length; bi++) {
-      const batch = group.pasteBatches[bi]
-      const filename = group.pasteBatches.length === 1
-        ? 'Paste_String.txt'
-        : `Paste_Batch_${bi + 1}.txt`
-      appFolder.file(filename, buildPasteFile(batch, group.appIndex, bi + 1, group.pasteBatches.length))
+      // Per-batch reference sheet showing title ↔ filename side by side
+      batchFolder.file(
+        'Reference_Sheet.csv',
+        buildVisualArtReferenceSheet(group, filenameMap, artistName, publishedStatus, groups.length, date),
+      )
+
+      // Image ZIP — drag and drop into copyright.gov upload box
+      const batchZip = new JSZip()
+      for (const { artwork, code } of group.works) {
+        const result = fetched.get(artwork.id)
+        if (!result?.blob) continue
+        batchZip.file(filenameMap.get(code)!, result.blob)
+      }
+      const batchZipBlob = await batchZip.generateAsync({ type: 'blob' })
+      batchFolder.file('Deposit_Images.zip', batchZipBlob)
     }
 
-    // Images
-    for (const { artwork, code } of group.works) {
-      const result = fetched.get(artwork.id)
-      if (!result?.blob) continue
-      imagesFolder.file(`${code}.${result.ext}`, result.blob)
+  } else {
+    // ── Photographs: root reference CSV + per-application paste batches + image ZIPs ──
+    const allWorks = groups.flatMap(g => g.works)
+    root.file('Reference_Template.csv', buildReferenceCsv(allWorks, artistName, workType, publishedStatus, date))
+
+    for (const group of groups) {
+      const appFolder = root.folder(`Application_${group.appIndex}`)!
+      const totalBatches = group.pasteBatches.length
+
+      // Build code → fetch result lookup
+      const codeToFetch = new Map<string, FetchResult>()
+      for (const { artwork, code } of group.works) {
+        const result = fetched.get(artwork.id)
+        if (result) codeToFetch.set(code, result)
+      }
+
+      for (let bi = 0; bi < totalBatches; bi++) {
+        const batch = group.pasteBatches[bi]
+        const batchNum = bi + 1
+
+        // Paste text file
+        const txtFilename = totalBatches === 1 ? 'Paste_String.txt' : `Paste_Batch_${batchNum}.txt`
+        appFolder.file(txtFilename, buildPasteFile(batch, group.appIndex, batchNum, totalBatches))
+
+        // Image ZIP for this batch — drag and drop into copyright.gov upload box
+        const batchZip = new JSZip()
+        for (const code of batch) {
+          const result = codeToFetch.get(code)
+          if (!result?.blob) continue
+          batchZip.file(`${code}.${result.ext}`, result.blob)
+        }
+        const zipFilename = totalBatches === 1 ? 'Deposit_Images.zip' : `Deposit_Images_Batch_${batchNum}.zip`
+        const batchZipBlob = await batchZip.generateAsync({ type: 'blob' })
+        appFolder.file(zipFilename, batchZipBlob)
+      }
     }
   }
 

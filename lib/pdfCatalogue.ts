@@ -5,24 +5,28 @@ import type { ProfileSettings } from './types'
 
 // ── Thumbnail loader ──────────────────────────────────────────────────────────
 // Loads any image src (data URL or remote URL) into a canvas and returns a
-// compact JPEG data URL suitable for embedding in jsPDF.
-async function toJpegDataUrl(src: string, maxPx = 160): Promise<string | null> {
+// compact JPEG data URL plus the original aspect ratio (w/h).
+type Thumb = { dataUrl: string; aspect: number } | null
+
+async function toJpegDataUrl(src: string, maxPx = 160): Promise<Thumb> {
   if (!src) return null
   return new Promise(resolve => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => {
       try {
-        const scale = Math.min(1, maxPx / Math.max(img.naturalWidth || 1, img.naturalHeight || 1))
-        const w = Math.max(1, Math.round(img.naturalWidth * scale))
-        const h = Math.max(1, Math.round(img.naturalHeight * scale))
+        const nw = img.naturalWidth || 1
+        const nh = img.naturalHeight || 1
+        const scale = Math.min(1, maxPx / Math.max(nw, nh))
+        const w = Math.max(1, Math.round(nw * scale))
+        const h = Math.max(1, Math.round(nh * scale))
         const canvas = document.createElement('canvas')
         canvas.width = w
         canvas.height = h
         const ctx = canvas.getContext('2d')
         if (!ctx) { resolve(null); return }
         ctx.drawImage(img, 0, 0, w, h)
-        resolve(canvas.toDataURL('image/jpeg', 0.78))
+        resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.78), aspect: nw / nh })
       } catch {
         resolve(null)
       }
@@ -70,7 +74,7 @@ export async function generatePdfCatalogue(
   doc.setFontSize(8)
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(110, 98, 78)
-  doc.text(`Catalogue · ${artworks.length} works · ${dateStr}`, 20, studioName ? 44 : 36)
+  doc.text(`Catalog · ${artworks.length} works · ${dateStr}`, 20, studioName ? 44 : 36)
 
   const separatorY = studioName ? 48 : 40
   doc.setDrawColor(...accentRgb)
@@ -134,12 +138,25 @@ export async function generatePdfCatalogue(
     tableLineWidth: 0.15,
     didDrawCell: (data) => {
       if (data.section === 'body' && data.column.index === 0) {
-        const dataUrl = thumbs[data.row.index]
-        if (dataUrl) {
+        const thumb = thumbs[data.row.index]
+        if (thumb) {
           try {
-            const imgX = data.cell.x + 1
-            const imgY = data.cell.y + (data.cell.height - THUMB_H) / 2
-            doc.addImage(dataUrl, 'JPEG', imgX, imgY, THUMB_W, THUMB_H)
+            // Fit image within the cell box, preserving aspect ratio
+            const maxW = THUMB_W
+            const maxH = THUMB_H
+            let drawW: number, drawH: number
+            if (thumb.aspect >= 1) {
+              // landscape
+              drawW = maxW
+              drawH = maxW / thumb.aspect
+            } else {
+              // portrait
+              drawH = maxH
+              drawW = maxH * thumb.aspect
+            }
+            const imgX = data.cell.x + 1 + (maxW - drawW) / 2
+            const imgY = data.cell.y + (data.cell.height - drawH) / 2
+            doc.addImage(thumb.dataUrl, 'JPEG', imgX, imgY, drawW, drawH)
           } catch {
             // skip if image embedding fails for this row
           }

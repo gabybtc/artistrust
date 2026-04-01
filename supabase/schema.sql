@@ -141,6 +141,9 @@ create table if not exists beta_emails (
   email text primary key
 );
 
+-- Only accessible via service-role or security-definer functions (e.g. handle_new_user trigger)
+alter table beta_emails enable row level security;
+
 -- One subscription record per user
 create table if not exists subscriptions (
   user_id               uuid primary key references auth.users(id) on delete cascade,

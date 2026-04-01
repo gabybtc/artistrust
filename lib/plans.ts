@@ -77,7 +77,7 @@ export const PLAN_CONFIG = {
       { label: 'Voice memos – artist\'s story',   included: true  },
       { label: 'Film archive metadata',           included: true  },
       { label: 'Shareable public portfolio',      included: true  },
-      { label: 'PDF catalogue export',            included: true  },
+      { label: 'PDF catalog export',              included: true  },
       { label: 'Copyright export package',        included: true  },
       { label: 'Full archive export at any time', included: true  },
       { label: 'Dedicated archivist support',     included: true  },
