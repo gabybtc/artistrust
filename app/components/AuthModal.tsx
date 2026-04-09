@@ -64,7 +64,7 @@ export default function AuthModal({ onAuth }: Props) {
         if (error) throw error
         setResetSent(true)
       } else if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({
+        const { data: signUpData, error } = await supabase.auth.signUp({
           email, password,
           options: {
             emailRedirectTo: window.location.origin,
@@ -72,19 +72,24 @@ export default function AuthModal({ onAuth }: Props) {
           },
         })
         if (error) throw error
+        // Fire welcome email right after signup — works whether or not email
+        // confirmation is required (session may not exist yet).
+        if (signUpData.user?.id) {
+          fetch('/api/email/welcome', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: signUpData.user.id,
+              email: signUpData.user.email,
+              name,
+            }),
+          }).catch(() => { /* non-critical */ })
+        }
         // After signup, try to sign in immediately
-        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ email, password })
+        const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password })
         if (signInErr) {
           setError('Account created — check your email to confirm, then sign in.')
         } else {
-          // Fire welcome email — fire-and-forget, never block sign-in on failure
-          const token = signInData.session?.access_token
-          if (token) {
-            fetch('/api/email/welcome', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${token}` },
-            }).catch(() => { /* non-critical */ })
-          }
           onAuth()
         }
       } else {

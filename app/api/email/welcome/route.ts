@@ -17,22 +17,30 @@ export async function POST(req: NextRequest) {
   if (!serviceKey) return NextResponse.json({ error: 'Not configured' }, { status: 503 })
   const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceKey)
 
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-  const { data: { user }, error: authError } = await admin.auth.getUser(
-    authHeader.replace('Bearer ', '')
-  )
-  if (authError || !user?.email) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const body = await req.json() as { userId?: string; email?: string; name?: string }
+  const { userId, email: bodyEmail, name: bodyName } = body
+
+  if (!userId || !bodyEmail) {
+    return NextResponse.json({ error: 'Missing userId or email' }, { status: 400 })
   }
 
-  const name = (user.user_metadata?.full_name as string | undefined)?.split(' ')[0] ?? 'there'
+  // Verify the user actually exists in Supabase Auth and was created recently
+  // (prevents someone calling this endpoint with an arbitrary email).
+  const { data: { user }, error: lookupErr } = await admin.auth.admin.getUserById(userId)
+  if (lookupErr || !user) {
+    return NextResponse.json({ error: 'User not found' }, { status: 404 })
+  }
+  const createdAt = new Date(user.created_at).getTime()
+  if (Date.now() - createdAt > 10 * 60 * 1000) {
+    // Only send within 10 minutes of signup — rejects replayed requests
+    return NextResponse.json({ error: 'Too late' }, { status: 400 })
+  }
+
+  const name = (bodyName ?? (user.user_metadata?.full_name as string | undefined) ?? '').split(' ')[0] || 'there'
 
   const { error } = await resend.emails.send({
     from: FROM,
-    to: user.email,
+    to: bodyEmail,
     subject: 'Welcome to ArtisTrust — your archive awaits',
     html: buildHtml(name),
   })
