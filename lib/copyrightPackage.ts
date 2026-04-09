@@ -222,7 +222,7 @@ function buildReferenceCsv(
     ].map(escape).join(',')
   })
 
-  return [...headerBlock, columnHeaders.map(escape).join(','), ...rows].join('\r\n')
+  return '\uFEFF' + [...headerBlock, columnHeaders.map(escape).join(','), ...rows].join('\r\n')
 }
 
 // ─── Visual art per-batch reference sheet ────────────────────────────────────
@@ -241,31 +241,31 @@ function buildVisualArtReferenceSheet(
     : 'Unpublished Two-Dimensional Artwork'
 
   const headerBlock = [
-    [`"ArtisTrust Copyright Export \u2014 Reference Template"`, ''],
-    [escape(`Artist: ${artistName}`), ''],
-    [escape(`Application type: ${appTypeLabel} \u2014 Batch ${group.appIndex} of ${totalGroups}`), ''],
-    [escape(`Works in this batch: ${group.works.length}`), ''],
-    [escape(`Date exported: ${date}`), ''],
-    ['', ''],
+    [`"ArtisTrust Copyright Export \u2014 Reference Template"`, '', ''],
+    [escape(`Artist: ${artistName}`), '', ''],
+    [escape(`Application type: ${appTypeLabel} \u2014 Batch ${group.appIndex} of ${totalGroups}`), '', ''],
+    [escape(`Works in this batch: ${group.works.length}`), '', ''],
+    [escape(`Date exported: ${date}`), '', ''],
+    ['', '', ''],
     [
       '"The title you copy and paste from the Reference sheet and the image file name will look slightly different \u2014 don\'t worry, this is correct."',
-      '',
+      '', '',
     ],
     [
       '"The Copyright Office requires spaces in titles and underscores in file names. They will match automatically in their system."',
-      '',
+      '', '',
     ],
-    ['', ''],
-    ['"Type this as the title"', '"Upload this file"'],
+    ['', '', ''],
+    ['"Type this as the title"', '"Individual File Name"', '"Zip file to upload"'],
   ].map(row => row.join(','))
 
   const rows = group.works.map(({ artwork: a, code }) => {
     const title = a.title || a.aiAnalysis?.suggestedTitle || a.fileName?.replace(/\.[^.]+$/, '') || 'Untitled'
     const filename = filenameMap.get(code) ?? `${code}.jpg`
-    return [escape(title), escape(filename)].join(',')
+    return [escape(title), escape(filename), escape('Deposit_Images.zip')].join(',')
   })
 
-  return [...headerBlock, ...rows].join('\r\n')
+  return '\uFEFF' + [...headerBlock, ...rows].join('\r\n')
 }
 
 // ─── Paste-string text file ───────────────────────────────────────────────────

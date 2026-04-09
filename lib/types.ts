@@ -35,6 +35,7 @@ export interface Artwork {
   copyrightYear: string     // defaults to year of creation
   copyrightRegNumber: string // registration number if registered
   isPublic?: boolean        // whether this artwork has a public share page
+  editions?: string          // number of editions (photography)
 }
 
 /** A user-defined catalogue tab (category) */

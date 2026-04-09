@@ -8,6 +8,7 @@ import {
   canExportCopyright,
   canViewExif,
   canSharePortfolio,
+  canShareWork,
   canExportPdf,
   getMonthlyUploadLimit,
 } from './plans'
@@ -22,6 +23,7 @@ interface UseSubscriptionResult {
   canUploadMore: (monthlyCount: number) => boolean
   canExportCopyright: boolean
   canViewExif: boolean
+  canShareWork: boolean
   canSharePortfolio: boolean
   canExportPdf: boolean
   /** Monthly upload limit for this plan (null = unlimited) */
@@ -51,6 +53,7 @@ const BILLING_DISABLED_RESULT: UseSubscriptionResult = {
   canUploadMore: () => true,
   canExportCopyright: true,
   canViewExif: true,
+  canShareWork: true,
   canSharePortfolio: true,
   canExportPdf: true,
   monthlyUploadLimit: null,
@@ -142,6 +145,7 @@ export function useSubscription(): UseSubscriptionResult {
     canUploadMore: (count: number) => canUploadMore(plan, count),
     canExportCopyright: canExportCopyright(plan),
     canViewExif: canViewExif(plan),
+    canShareWork: canShareWork(plan),
     canSharePortfolio: canSharePortfolio(plan),
     canExportPdf: canExportPdf(plan),
     monthlyUploadLimit: getMonthlyUploadLimit(plan),

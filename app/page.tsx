@@ -224,7 +224,7 @@ export default function Home() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${(profile?.fullName ?? 'archive').replace(/\s+/g, '-').toLowerCase()}-catalogue.pdf`
+      a.download = `${(profile?.fullName ?? 'archive').replace(/\s+/g, '-').toLowerCase()}-catalog.pdf`
       a.click()
       URL.revokeObjectURL(url)
     } finally {
@@ -413,7 +413,7 @@ export default function Home() {
             <div style={{ display: 'flex', gap: 28 }}>
               {[
                 { label: 'Works',      value: stats.total },
-                { label: 'Catalogued', value: stats.complete },
+                { label: 'Cataloged', value: stats.complete },
                 { label: 'Stories',    value: stats.withStory },
               ].map(s => (
                 <div key={s.label} style={{ textAlign: 'right' }}>
@@ -852,7 +852,7 @@ export default function Home() {
                         if (filter !== f) (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'
                       }}
                     >
-                      {f === 'all' ? 'All' : f === 'complete' ? 'Catalogued' : 'Pending'}
+                      {f === 'all' ? 'All' : f === 'complete' ? 'Cataloged' : 'Pending'}
                     </button>
                   ))}
                 </div>
@@ -941,7 +941,7 @@ export default function Home() {
                     </button>
                     <button
                       key="cluster"
-                      title="View your works arranged by colour"
+                      title="View your works arranged by color"
                       onClick={() => setViewMode('cluster')}
                       style={{
                         height: 28,
@@ -977,7 +977,7 @@ export default function Home() {
                         <line x1="11" y1="8.5" x2="8.4" y2="7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
                         <line x1="2" y1="8.5" x2="4.6" y2="7" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
                       </svg>
-                      Colour Wheel
+                      Color Wheel
                     </button>
                   </div>
                 )}
@@ -1260,7 +1260,7 @@ export default function Home() {
             onSaved={() => showToast('Saved to catalog')}
             onTogglePublic={(isPublic) => handleTogglePublic(selected.id, isPublic)}
             onSetDefault={uploadDefaults.setDefault}
-            canSharePortfolio={subscription.canSharePortfolio}
+            canShareWork={subscription.canShareWork}
             onUpgradeClick={() => openPricing('portfolio')}
           />
         )}

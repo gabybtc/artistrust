@@ -26,7 +26,7 @@ interface Props {
   onUpgradeClick?: () => void
 }
 
-type Step = 'configure' | 'select' | 'preview'
+type Step = 'configure' | 'select' | 'review-selection' | 'preview'
 
 // ─── Upgrade gate ─────────────────────────────────────────────────────────────
 
@@ -121,8 +121,8 @@ function SmallButton({ onClick, children, active }: { onClick: () => void; child
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
 function StepDots({ step }: { step: Step }) {
-  const steps: Step[] = ['configure', 'select', 'preview']
-  const labels = ['Configure', 'Select works', 'Review & export']
+  const steps: Step[] = ['configure', 'select', 'review-selection', 'preview']
+  const labels = ['Configure', 'Select works', 'Review selection', 'Review & export']
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       {steps.map((s, i) => (
@@ -456,6 +456,81 @@ export default function CopyrightExportModal({ artworks, tabs, initialSelected, 
     </div>
   )
 
+  const renderReviewSelection = () => {
+    if (selectedArtworks.length === 0) {
+      return (
+        <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-dim)', fontSize: 13, fontFamily: 'var(--font-body)' }}>
+          No works selected — go back and select at least one.
+        </div>
+      )
+    }
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-body)', lineHeight: 1.7 }}>
+          These are the {selectedArtworks.length} work{selectedArtworks.length === 1 ? '' : 's'} you&apos;ve selected.
+          Click any to remove it from the export, then continue when you&apos;re happy with your selection.
+        </div>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))',
+          gap: 8,
+        }}>
+          {selectedArtworks.map(a => {
+            const displayTitle = a.title || a.aiAnalysis?.suggestedTitle || ''
+            return (
+              <button
+                key={a.id}
+                onClick={() => toggleOne(a.id)}
+                title="Click to remove from selection"
+                style={{
+                  position: 'relative',
+                  background: 'rgba(201,169,110,0.12)',
+                  border: '1px solid var(--accent)',
+                  borderRadius: 3,
+                  padding: 0, cursor: 'pointer', overflow: 'hidden',
+                  display: 'flex', flexDirection: 'column',
+                  textAlign: 'left',
+                }}
+              >
+                <div style={{ width: '100%', aspectRatio: '1', overflow: 'hidden', background: '#111', position: 'relative' }}>
+                  {a.imageData.startsWith('http') ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={a.imageData} alt={displayTitle || 'artwork'} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  ) : (
+                    <div style={{ width: '100%', height: '100%', background: 'var(--border)' }} />
+                  )}
+                  {/* Remove overlay on hover */}
+                  <div className="remove-overlay" style={{
+                    position: 'absolute', inset: 0,
+                    background: 'rgba(180,60,60,0.55)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    opacity: 0, transition: 'opacity 0.15s',
+                  }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.opacity = '1' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.opacity = '0' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <path d="M4 4L12 12M12 4L4 12" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+                    </svg>
+                  </div>
+                </div>
+                <div style={{
+                  padding: '5px 6px',
+                  fontSize: 10, color: displayTitle ? 'var(--text-dim)' : '#e0a05a',
+                  fontFamily: 'var(--font-body)',
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  lineHeight: 1.3,
+                }}>
+                  {displayTitle || '⚠ No title'}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
   const renderPreview = () => {
     if (!costPreview || selectedArtworks.length === 0) {
       return (
@@ -623,6 +698,7 @@ export default function CopyrightExportModal({ artworks, tabs, initialSelected, 
         <div style={{ flex: 1, overflowY: 'auto', padding: '24px 24px' }}>
           {step === 'configure' && renderConfigure()}
           {step === 'select' && renderSelect()}
+          {step === 'review-selection' && renderReviewSelection()}
           {step === 'preview' && renderPreview()}
         </div>
 
@@ -634,7 +710,12 @@ export default function CopyrightExportModal({ artworks, tabs, initialSelected, 
           gap: 12, flexShrink: 0,
         }}>
           <button
-            onClick={step === 'configure' ? onClose : () => setStep(step === 'preview' ? 'select' : 'configure')}
+            onClick={() => {
+              if (step === 'configure') onClose()
+              else if (step === 'select') setStep('configure')
+              else if (step === 'review-selection') setStep('select')
+              else setStep('review-selection')
+            }}
             style={{
               background: 'transparent', border: '1px solid var(--border)', borderRadius: 2,
               padding: '7px 20px', color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
@@ -646,7 +727,11 @@ export default function CopyrightExportModal({ artworks, tabs, initialSelected, 
 
           {step !== 'preview' ? (
             <button
-              onClick={() => step === 'configure' ? setStep('select') : setStep('preview')}
+              onClick={() => {
+                if (step === 'configure') setStep('select')
+                else if (step === 'select') setStep('review-selection')
+                else setStep('preview')
+              }}
               disabled={step === 'configure' ? !canProceedFromConfigure : !canProceedFromSelect}
               style={{
                 background: (step === 'configure' ? canProceedFromConfigure : canProceedFromSelect) ? 'var(--accent)' : 'transparent',
@@ -660,7 +745,7 @@ export default function CopyrightExportModal({ artworks, tabs, initialSelected, 
                 transition: 'all 0.15s',
               }}
             >
-              {step === 'configure' ? 'Select works →' : `Review ${checkedIds.size} works →`}
+              {step === 'configure' ? 'Select works →' : step === 'select' ? `Review ${checkedIds.size} selected →` : `Continue to export →`}
             </button>
           ) : (
             <button

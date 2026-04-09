@@ -129,7 +129,12 @@ export function canViewExif(plan: Plan): boolean {
   return plan === 'studio' || plan === 'archive' || plan === 'beta'
 }
 
-/** Whether the user can create shareable portfolio links. */
+/** Whether the user can share individual public work pages (Studio+). */
+export function canShareWork(plan: Plan): boolean {
+  return plan === 'studio' || plan === 'archive' || plan === 'beta'
+}
+
+/** Whether the user can create shareable portfolio links (Archive+). */
 export function canSharePortfolio(plan: Plan): boolean {
   return plan === 'archive' || plan === 'beta'
 }

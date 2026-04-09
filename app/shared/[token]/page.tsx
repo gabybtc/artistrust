@@ -65,7 +65,7 @@ export default function SharedPage({ params }: { params: Promise<{ token: string
         const hasPaintings = json.artworks.some((a: RawRow) => (a.media_type ?? 'painting') === 'painting')
         if (!hasPaintings) setActiveTab('photography')
       })
-      .catch(() => setError('Failed to load catalogue.'))
+      .catch(() => setError('Failed to load catalog.'))
   }, [token])
 
   if (error) {
@@ -281,7 +281,7 @@ export default function SharedPage({ params }: { params: Promise<{ token: string
               fontFamily: 'var(--font-display)',
               fontSize: 18, fontStyle: 'italic', color: 'var(--muted)',
             }}>
-              No {activeTab === 'photography' ? 'photographs' : 'paintings'} in this catalogue
+              No {activeTab === 'photography' ? 'photographs' : 'paintings'} in this catalog
             </p>
           </div>
         ) : (
@@ -317,7 +317,7 @@ export default function SharedPage({ params }: { params: Promise<{ token: string
           fontSize: 11, color: 'var(--muted)',
           fontFamily: 'var(--font-body)', letterSpacing: '0.06em',
         }}>
-          This is a private, read-only view of {artistName}&apos;s art catalogue.
+          This is a private, read-only view of {artistName}&apos;s art catalog.
           Shared via ArtisTrust Studio.
         </p>
       </div>

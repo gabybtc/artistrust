@@ -25,7 +25,7 @@ export default function PricingModal({ onClose, onUpgrade, lockedFeature, curren
     copyright:    'Copyright export packages require the Studio plan or above.',
     exif:         'Film archive metadata requires the Studio plan or above.',
     portfolio:    'Shareable public portfolios require the Archive plan.',
-    pdf:          'PDF catalogue export requires the Archive plan.',
+    pdf:          'PDF catalog export requires the Archive plan.',
   }
 
   return (

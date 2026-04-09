@@ -109,12 +109,6 @@ export default function AuthModal({ onAuth }: Props) {
           }}>
             ArtisTrust
           </h1>
-          <span style={{
-            fontSize: 10, letterSpacing: '0.22em', textTransform: 'uppercase',
-            color: 'var(--accent-dim)', fontFamily: 'var(--font-body)',
-          }}>
-            Studio
-          </span>
           <div style={{
             marginTop: 20,
             height: 1,

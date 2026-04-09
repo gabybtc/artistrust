@@ -4,13 +4,11 @@ import { Artwork, AiAnalysis } from '@/lib/types'
 
 // ── Cluster modes ─────────────────────────────────────────────────────────────
 
-type ClusterMode = 'colour' | 'period' | 'medium' | 'style' | 'region'
+type ClusterMode = 'colour' | 'period' | 'region'
 
 const CLUSTER_MODES: { id: ClusterMode; label: string }[] = [
-  { id: 'colour',  label: 'Colour'  },
+  { id: 'colour',  label: 'Color'   },
   { id: 'period',  label: 'Period'  },
-  { id: 'medium',  label: 'Medium'  },
-  { id: 'style',   label: 'Style'   },
   { id: 'region',  label: 'Region'  },
 ]
 
@@ -154,8 +152,11 @@ const CX = BOARD / 2
 const CY = BOARD / 2
 const SPREAD_R = 140
 const MAX_SPREAD = 56
-const TIMELINE_PAD_X = 44   // horizontal inset before first/after last year mark
-const TIMELINE_ROW_GAP = 46  // distance from centre line to first row of thumbnails
+const TIMELINE_PAD_X = 44        // horizontal inset before first/after last year mark
+const TIMELINE_ABOVE_GAP = 46    // centre of first above-row from baseline
+const TIMELINE_BELOW_GAP = 64    // centre of first below-row (clears year labels at +10…+24 px)
+const TIMELINE_COL_STEP = THUMB + 4   // 72 — horizontal step between columns within a bucket
+const TIMELINE_ROW_STEP = THUMB + 6   // 74 — vertical step between rows within a bucket
 
 // Map Lab a*/b* to board x/y.
 // a* → horizontal axis (positive = red-ish, negative = green-ish)
@@ -226,7 +227,6 @@ function timelineLayout(artworks: Artwork[]): TimelineData {
   for (let b = minBucket; b <= maxBucket; b += bucketSize) allBuckets.push(b)
 
   const usableW = BOARD - TIMELINE_PAD_X * 2 - THUMB
-  const rowStep = THUMB + 8
 
   // Map a bucket year to an x pixel position; centre the single-bucket case
   const toX = (b: number) =>
@@ -234,27 +234,50 @@ function timelineLayout(artworks: Artwork[]): TimelineData {
       ? CX
       : TIMELINE_PAD_X + ((b - minBucket) / bucketRange) * usableW + THUMB / 2
 
-  // dy = vertical offset from the centre line (negative = above, positive = below)
+  // dy = vertical offset from the centre line (negative = above, positive = below).
+  // Layout: first half of each bucket's artworks cluster above the line in a compact
+  // grid, second half cluster below — with enough clearance so year labels are never
+  // obscured.  No per-item jitter; the 2-column grid gives natural spread.
   const placed: Array<{ artwork: Artwork; bx: number; dy: number }> = []
   for (const [bucket, members] of groups) {
     const cx = toX(bucket)
-    members.forEach((artwork, i) => {
-      const jitter = idJitter(artwork.id, 8)
-      const side = i % 2 === 0 ? -1 : 1
-      const slot = Math.floor(i / 2)
-      const oy = side * (TIMELINE_ROW_GAP + slot * rowStep)
+    const n = members.length
+    // Use 2 columns for 3+ items so stacks grow horizontally before going tall
+    const maxCols = n <= 2 ? 1 : 2
+    const aboveCount = Math.ceil(n / 2)
+
+    // Above items (first half): rows grow upward from the line
+    for (let i = 0; i < aboveCount; i++) {
+      const row = Math.floor(i / maxCols)
+      const col = i % maxCols
+      const colsInRow = Math.min(maxCols, aboveCount - row * maxCols)
+      const xOff = (col - (colsInRow - 1) / 2) * TIMELINE_COL_STEP
       placed.push({
-        artwork,
-        bx: Math.max(4, Math.min(BOARD - THUMB - 4, cx - THUMB / 2 + jitter.dx)),
-        dy: oy + jitter.dy,
+        artwork: members[i],
+        bx: Math.max(4, Math.min(BOARD - THUMB - 4, cx - THUMB / 2 + xOff)),
+        dy: -(TIMELINE_ABOVE_GAP + row * TIMELINE_ROW_STEP),
       })
-    })
+    }
+
+    // Below items (second half): rows grow downward, starting below the label zone
+    const belowCount = n - aboveCount
+    for (let i = 0; i < belowCount; i++) {
+      const row = Math.floor(i / maxCols)
+      const col = i % maxCols
+      const colsInRow = Math.min(maxCols, belowCount - row * maxCols)
+      const xOff = (col - (colsInRow - 1) / 2) * TIMELINE_COL_STEP
+      placed.push({
+        artwork: members[aboveCount + i],
+        bx: Math.max(4, Math.min(BOARD - THUMB - 4, cx - THUMB / 2 + xOff)),
+        dy: +(TIMELINE_BELOW_GAP + row * TIMELINE_ROW_STEP),
+      })
+    }
   }
 
   // Compute the minimum container height that fits all thumbnails + tick labels
   const dyVals = placed.map(p => p.dy)
-  const halfAbove = Math.max(TIMELINE_ROW_GAP + THUMB, -Math.min(...dyVals) + THUMB / 2 + 12)
-  const halfBelow = Math.max(TIMELINE_ROW_GAP + THUMB, Math.max(...dyVals) + THUMB / 2 + 28)
+  const halfAbove = Math.max(TIMELINE_ABOVE_GAP + THUMB / 2, -Math.min(...dyVals) + THUMB / 2 + 12)
+  const halfBelow = Math.max(TIMELINE_BELOW_GAP + THUMB / 2, Math.max(...dyVals) + THUMB / 2 + 28)
   const containerH = Math.ceil(halfAbove + halfBelow)
 
   // Tick marks at every bucket; thin out text labels when there are many
@@ -328,13 +351,6 @@ function keyForMode(mode: ClusterMode, artwork: Artwork): string {
       if (isNaN(y)) return 'Unknown'
       return `${Math.floor(y / 10) * 10}s`
     }
-    case 'medium': {
-      const raw = artwork.material || artwork.aiAnalysis?.medium || ''
-      if (!raw) return 'Unknown'
-      return raw.split(',')[0].trim().split(/\s+/).slice(0, 3).join(' ')
-    }
-    case 'style':
-      return artwork.aiAnalysis?.style || 'Unknown'
     case 'region': {
       const raw = artwork.place || ''
       if (!raw) return 'Unknown'
@@ -498,16 +514,12 @@ export default function ColourClusterView({ artworks, onSelect, onUpdate }: Prop
   const subtitles: Record<ClusterMode, string> = {
     colour:  'Works arranged by their dominant colour',
     period:  'Works arranged chronologically',
-    medium:  'Works grouped by material or medium',
-    style:   'Works grouped by artistic style',
     region:  'Works grouped by place or region',
   }
 
   const tooltips: Record<ClusterMode, string> = {
     colour:  'Each work is placed by its main colour. The direction shows the colour family — red, yellow, green, blue, and so on. The further from the centre, the more vivid or saturated the piece. Grey, near-white, and colourless works appear in the strip below.',
     period:  'Each spoke represents a decade. Works radiate outward from the center along their spoke.',
-    medium:  'Each spoke is a distinct medium (oil, watercolor, etc.). The most-used media are at the top.',
-    style:   'Each spoke is an artistic style as identified by AI analysis.',
     region:  'Each spoke is a place or region. The most-visited locations are at the top.',
   }
 

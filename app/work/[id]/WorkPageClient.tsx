@@ -256,7 +256,7 @@ export default function WorkPageClient({ work }: { work: WorkRow }) {
               fontSize: 11, color: 'rgba(232,232,232,0.2)',
               letterSpacing: '0.06em', textTransform: 'uppercase',
             }}>
-              Catalogued with ArtisTrust
+              Cataloged with ArtisTrust
             </p>
           </div>
         </div>

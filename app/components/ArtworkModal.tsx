@@ -26,8 +26,8 @@ interface ArtworkModalProps {
   suggestions?: ArtworkSuggestions
   /** Called when the user clicks 'set as default' on a field in this modal */
   onSetDefault?: (field: keyof UploadDefaults, value: string) => void
-  /** Whether the current plan allows portfolio sharing — gates the public toggle */
-  canSharePortfolio?: boolean
+  /** Whether the current plan allows individual work sharing (Studio+) */
+  canShareWork?: boolean
   /** Open the pricing modal to prompt an upgrade */
   onUpgradeClick?: () => void
 }
@@ -80,7 +80,7 @@ function SetDefaultBtn({ onClick }: { onClick: () => void }) {
   )
 }
 
-export default function ArtworkModal({ artwork, tabs, onClose, onUpdate, onDelete, onSaved, onTogglePublic, suggestions, onSetDefault, canSharePortfolio = false, onUpgradeClick }: ArtworkModalProps) {
+export default function ArtworkModal({ artwork, tabs, onClose, onUpdate, onDelete, onSaved, onTogglePublic, suggestions, onSetDefault, canShareWork = false, onUpgradeClick }: ArtworkModalProps) {
   const displayTitle = artwork.title || artwork.aiAnalysis?.suggestedTitle || 'Untitled'
   const medium = artwork.material || artwork.aiAnalysis?.medium
 
@@ -126,7 +126,7 @@ export default function ArtworkModal({ artwork, tabs, onClose, onUpdate, onDelet
   }
 
   const handleTogglePublic = () => {
-    if (!canSharePortfolio) {
+    if (!canShareWork) {
       onUpgradeClick?.()
       return
     }
@@ -151,6 +151,7 @@ export default function ArtworkModal({ artwork, tabs, onClose, onUpdate, onDelet
     copyrightHolder:    artwork.copyrightHolder    || '',
     copyrightYear:      artwork.copyrightYear      || artwork.year || new Date().getFullYear().toString(),
     copyrightRegNumber: artwork.copyrightRegNumber || '',
+    editions:           artwork.editions           || '',
   })
 
   useEffect(() => {
@@ -317,27 +318,29 @@ export default function ArtworkModal({ artwork, tabs, onClose, onUpdate, onDelet
                   fontFamily: 'var(--font-body)', fontSize: 11,
                   color: 'var(--muted)', marginTop: 2, letterSpacing: '0.02em',
                 }}>
-                  {isPublic
+                  {!canShareWork
+                    ? 'Individual work sharing requires the Studio plan'
+                    : isPublic
                     ? 'Anyone with the link can view this work — voice memo is never shown'
-                    : canSharePortfolio
-                    ? 'Enable to get a shareable link for galleries, collectors & social media'
-                    : 'Shareable portfolio requires the Archive plan'}
+                    : 'Enable to get a shareable link for galleries, collectors & social media'}
                 </span>
               </div>
 
               {/* Toggle switch */}
               <button
                 onClick={handleTogglePublic}
+                disabled={!canShareWork}
                 style={{
                   position: 'relative',
                   width: 40, height: 22, flexShrink: 0,
                   background: isPublic ? 'rgba(201,169,110,0.7)' : 'var(--surface)',
                   border: `1px solid ${isPublic ? 'var(--accent)' : 'var(--border)'}`,
                   borderRadius: 11,
-                  cursor: 'pointer',
+                  cursor: canShareWork ? 'pointer' : 'not-allowed',
                   transition: 'background 0.2s, border-color 0.2s',
                   padding: 0,
                   marginLeft: 16,
+                  opacity: canShareWork ? 1 : 0.4,
                 }}
               >
                 <span style={{
@@ -610,6 +613,31 @@ export default function ArtworkModal({ artwork, tabs, onClose, onUpdate, onDelet
                     <option key={tab.id} value={tab.id}>{tab.label}</option>
                   ))}
                 </select>
+              </div>
+            )}
+
+            {/* Editions — photography only */}
+            {form.mediaType === 'photography' && (
+              <div>
+                <label style={labelStyle}>
+                  <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="8" height="8" rx="1"/><path d="M3 3V2a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1h-1"/></svg>
+                  Editions
+                </label>
+                <input
+                  type="text"
+                  value={form.editions}
+                  onChange={e => setForm(f => ({ ...f, editions: e.target.value }))}
+                  placeholder="e.g. 20"
+                  style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = 'var(--accent-dim)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+                />
+                <p style={{
+                  marginTop: 5, fontSize: 11, color: 'var(--muted)',
+                  fontFamily: 'var(--font-body)', letterSpacing: '0.04em',
+                }}>
+                  Total number of prints in this edition
+                </p>
               </div>
             )}
 
