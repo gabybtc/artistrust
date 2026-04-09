@@ -46,7 +46,30 @@ export async function POST(req: NextRequest) {
         }, { onConflict: 'user_id' })
       }
 
-      // Legacy upload one-time payment — removed
+      // Setup mode — card saved by a Preserve user for overage payments
+      if (session.mode === 'setup') {
+        const customerId = session.customer as string
+        const setupIntent = session.setup_intent as string | null
+
+        // Set the saved card as the customer's default payment method
+        if (setupIntent) {
+          const si = await stripe.setupIntents.retrieve(setupIntent)
+          const pm = si.payment_method as string | null
+          if (pm) {
+            await stripe.customers.update(customerId, {
+              invoice_settings: { default_payment_method: pm },
+            })
+          }
+        }
+
+        // Ensure the customer ID is persisted for users who had no prior subscription row
+        await admin.from('subscriptions').upsert({
+          user_id: userId,
+          stripe_customer_id: customerId,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' })
+      }
+
       break
     }
 

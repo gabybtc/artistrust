@@ -79,6 +79,10 @@ export default function Home() {
         showToast('Plan upgraded successfully!')
         window.history.replaceState({}, '', '/')
       }
+      if (params.get('card') === 'saved') {
+        showToast('Card saved — you can now upload beyond your monthly limit.')
+        window.history.replaceState({}, '', '/')
+      }
     }
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
@@ -1415,16 +1419,18 @@ export default function Home() {
               {uploadQueue.pendingOverageCount === 1
                 ? 'This upload exceeds your monthly limit.'
                 : `These ${uploadQueue.pendingOverageCount} uploads exceed your monthly limit.`}{' '}
-              Your saved card will be charged{' '}
-              <strong style={{ color: '#f5f5f5' }}>${uploadQueue.pendingOverageCost.toFixed(2)}</strong>
-              {' '}($0.05 per upload).
+              {overageError !== 'no_payment_method' && <>
+                Your saved card will be charged{' '}
+                <strong style={{ color: '#f5f5f5' }}>${uploadQueue.pendingOverageCost.toFixed(2)}</strong>
+                {' '}($0.05 per upload).
+              </>}
             </p>
             {overageError && (
               <p style={{ margin: '0 0 14px', fontSize: 13, color: '#f87171', lineHeight: 1.5 }}>
                 {overageError === 'no_payment_method'
-                  ? 'No payment method on file. Add a card in your billing settings, then try again.'
+                  ? 'No payment method on file. Add a card to pay $0.05 per upload — no plan upgrade needed.'
                   : overageError === 'payment_requires_action'
-                  ? 'Your card requires additional verification. Please use a different card via billing settings.'
+                  ? 'Your card requires additional verification. Please update your card via billing settings.'
                   : `Payment failed: ${overageError}`}
               </p>
             )}
@@ -1440,6 +1446,36 @@ export default function Home() {
               >
                 Cancel
               </button>
+              {overageError === 'no_payment_method' ? (
+                <button
+                  disabled={overageLoading}
+                  onClick={async () => {
+                    setOverageLoading(true)
+                    setOverageError('')
+                    const { data } = await supabase.auth.getSession()
+                    const token = data.session?.access_token
+                    if (!token) { setOverageError('Not signed in'); setOverageLoading(false); return }
+                    const res = await fetch('/api/billing/setup', {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${token}` },
+                    })
+                    const json = await res.json() as { url?: string; error?: string }
+                    if (!res.ok || !json.url) {
+                      setOverageError(json.error ?? 'Could not open card setup')
+                      setOverageLoading(false)
+                      return
+                    }
+                    window.location.href = json.url
+                  }}
+                  style={{
+                    padding: '8px 18px', borderRadius: 8, border: 'none',
+                    background: overageLoading ? '#888' : '#f5f5f5',
+                    color: '#111', cursor: overageLoading ? 'wait' : 'pointer', fontSize: 13, fontWeight: 600,
+                  }}
+                >
+                  {overageLoading ? 'Redirecting…' : 'Add card'}
+                </button>
+              ) : (
               <button
                 disabled={overageLoading}
                 onClick={async () => {
@@ -1474,6 +1510,7 @@ export default function Home() {
               >
                 {overageLoading ? 'Charging…' : `Upload for $${uploadQueue.pendingOverageCost.toFixed(2)}`}
               </button>
+              )}
             </div>
           </div>
         </div>
