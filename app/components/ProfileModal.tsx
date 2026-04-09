@@ -9,6 +9,7 @@ interface Props {
   userEmail: string
   onClose: () => void
   onSaved: () => void
+  onSignOut: () => void
 }
 
 const empty: ProfileSettings = {
@@ -43,7 +44,7 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 6,
 }
 
-export default function ProfileModal({ userId, userEmail, onClose, onSaved }: Props) {
+export default function ProfileModal({ userId, userEmail, onClose, onSaved, onSignOut }: Props) {
   const [form, setForm] = useState<ProfileSettings>(empty)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -52,6 +53,10 @@ export default function ProfileModal({ userId, userEmail, onClose, onSaved }: Pr
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [passwordSaving, setPasswordSaving] = useState(false)
+  const [deleteSection, setDeleteSection] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     getProfileSettings(userId).then(data => {
@@ -377,6 +382,111 @@ export default function ProfileModal({ userId, userEmail, onClose, onSaved }: Pr
                   }}
                 >
                   {passwordSaving ? 'Updating…' : 'Update Password'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Danger zone */}
+          <div style={{ marginTop: 28, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
+            <button
+              onClick={() => { setDeleteSection(p => !p); setDeleteConfirm(''); setDeleteError(null) }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 8,
+                fontFamily: 'var(--font-body)',
+                fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+                color: '#e05555', padding: 0, transition: 'opacity 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.opacity = '0.7')}
+              onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+            >
+              <svg width="11" height="13" viewBox="0 0 11 13" fill="none">
+                <path d="M1 3h9M4 3V2h3v1M2 3l.5 8h6L9 3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Delete Account
+              <span style={{
+                fontSize: 10, opacity: 0.5,
+                transform: deleteSection ? 'rotate(180deg)' : 'none',
+                display: 'inline-block', transition: 'transform 0.2s',
+              }}>▾</span>
+            </button>
+
+            {deleteSection && (
+              <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <p style={{
+                  fontSize: 13, color: 'var(--text-dim)',
+                  fontFamily: 'var(--font-body)', lineHeight: 1.6, margin: 0,
+                  background: 'rgba(224,85,85,0.06)',
+                  border: '1px solid rgba(224,85,85,0.15)',
+                  borderRadius: 2, padding: '12px',
+                }}>
+                  This will <strong style={{ color: '#e05555' }}>permanently delete</strong> your account,
+                  all artworks, and all stored files. This cannot be undone.
+                </p>
+                <div>
+                  <label style={{ ...labelStyle, color: '#e05555' }}>
+                    Type DELETE to confirm
+                  </label>
+                  <input
+                    type="text"
+                    value={deleteConfirm}
+                    onChange={e => setDeleteConfirm(e.target.value)}
+                    placeholder="DELETE"
+                    style={inputStyle}
+                    onFocus={e => (e.target.style.borderColor = 'rgba(224,85,85,0.5)')}
+                    onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+                  />
+                </div>
+
+                {deleteError && (
+                  <p style={{
+                    fontSize: 13, color: '#e05555',
+                    fontFamily: 'var(--font-body)',
+                    background: 'rgba(224,85,85,0.08)',
+                    border: '1px solid rgba(224,85,85,0.2)',
+                    borderRadius: 2, padding: '9px 12px', lineHeight: 1.5,
+                  }}>{deleteError}</p>
+                )}
+
+                <button
+                  disabled={deleteConfirm !== 'DELETE' || deleteLoading}
+                  onClick={async () => {
+                    if (deleteConfirm !== 'DELETE') return
+                    setDeleteLoading(true)
+                    setDeleteError(null)
+                    const { data } = await supabase.auth.getSession()
+                    const token = data.session?.access_token
+                    if (!token) { setDeleteError('Not signed in'); setDeleteLoading(false); return }
+                    const res = await fetch('/api/account/delete', {
+                      method: 'DELETE',
+                      headers: { Authorization: `Bearer ${token}` },
+                    })
+                    const json = await res.json() as { ok?: boolean; error?: string }
+                    if (!res.ok) {
+                      setDeleteError(json.error ?? 'Deletion failed. Please try again.')
+                      setDeleteLoading(false)
+                      return
+                    }
+                    await supabase.auth.signOut()
+                    onSignOut()
+                    onClose()
+                  }}
+                  style={{
+                    background: deleteConfirm === 'DELETE' && !deleteLoading
+                      ? 'rgba(224,85,85,0.15)'
+                      : 'transparent',
+                    border: '1px solid rgba(224,85,85,0.3)',
+                    borderRadius: 2, padding: '9px',
+                    color: deleteConfirm === 'DELETE' ? '#e05555' : 'var(--muted)',
+                    fontFamily: 'var(--font-body)',
+                    fontSize: 11, fontWeight: 500,
+                    letterSpacing: '0.12em', textTransform: 'uppercase',
+                    cursor: deleteConfirm === 'DELETE' && !deleteLoading ? 'pointer' : 'not-allowed',
+                    transition: 'all 0.18s',
+                  }}
+                >
+                  {deleteLoading ? 'Deleting…' : 'Permanently Delete My Account'}
                 </button>
               </div>
             )}

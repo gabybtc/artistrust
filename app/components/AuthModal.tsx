@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
-type Mode = 'signin' | 'signup' | 'magic'
+type Mode = 'signin' | 'signup' | 'magic' | 'forgot'
 
 interface Props {
   onAuth: () => void
@@ -16,6 +16,7 @@ export default function AuthModal({ onAuth }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [magicSent, setMagicSent] = useState(false)
+  const [resetSent, setResetSent] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
   const inputStyle: React.CSSProperties = {
@@ -56,6 +57,12 @@ export default function AuthModal({ onAuth }: Props) {
         })
         if (error) throw error
         setMagicSent(true)
+      } else if (mode === 'forgot') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/auth/reset`,
+        })
+        if (error) throw error
+        setResetSent(true)
       } else if (mode === 'signup') {
         const { error } = await supabase.auth.signUp({
           email, password,
@@ -66,10 +73,18 @@ export default function AuthModal({ onAuth }: Props) {
         })
         if (error) throw error
         // After signup, try to sign in immediately
-        const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password })
+        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ email, password })
         if (signInErr) {
           setError('Account created — check your email to confirm, then sign in.')
         } else {
+          // Fire welcome email — fire-and-forget, never block sign-in on failure
+          const token = signInData.session?.access_token
+          if (token) {
+            fetch('/api/email/welcome', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+            }).catch(() => { /* non-critical */ })
+          }
           onAuth()
         }
       } else {
@@ -125,7 +140,7 @@ export default function AuthModal({ onAuth }: Props) {
           {(['signin', 'signup', 'magic'] as Mode[]).map(m => (
             <button
               key={m}
-              onClick={() => { setMode(m); setError(null); setMagicSent(false) }}
+              onClick={() => { setMode(m); setError(null); setMagicSent(false); setResetSent(false) }}
               style={{
                 flex: 1,
                 background: mode === m ? 'var(--surface)' : 'transparent',
@@ -144,8 +159,99 @@ export default function AuthModal({ onAuth }: Props) {
           ))}
         </div>
 
-        {/* Magic link sent */}
-        {magicSent ? (
+        {/* Forgot password / reset sent */}
+        {mode === 'forgot' ? (
+          resetSent ? (
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: '50%',
+                background: 'rgba(201,169,110,0.12)',
+                border: '1px solid var(--accent-dim)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                margin: '0 auto 16px',
+                color: 'var(--accent)', fontSize: 18,
+              }}>✓</div>
+              <p style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 15, fontStyle: 'italic',
+                color: 'var(--text)', marginBottom: 8,
+              }}>Check your inbox</p>
+              <p style={{
+                fontSize: 13, color: 'var(--text-dim)',
+                fontFamily: 'var(--font-body)', lineHeight: 1.6,
+              }}>
+                A reset link was sent to <strong style={{ color: 'var(--text)' }}>{email}</strong>.<br />
+                Click it to set a new password.
+              </p>
+              <button
+                onClick={() => { setMode('signin'); setResetSent(false) }}
+                style={{
+                  marginTop: 20, background: 'none', border: 'none',
+                  cursor: 'pointer', color: 'var(--accent)',
+                  fontFamily: 'var(--font-body)', fontSize: 12,
+                  letterSpacing: '0.1em', textTransform: 'uppercase',
+                }}
+              >Back to sign in</button>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <p style={{
+                fontSize: 13, color: 'var(--text-dim)',
+                fontFamily: 'var(--font-body)', lineHeight: 1.6,
+                margin: 0,
+              }}>
+                Enter your email and we&apos;ll send a link to reset your password.
+              </p>
+              <div>
+                <label style={labelStyle}>Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="your@email.com"
+                  required
+                  autoFocus
+                  style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = 'var(--accent-dim)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+                />
+              </div>
+              {error && (
+                <p style={{
+                  fontSize: 13, color: '#e05555',
+                  fontFamily: 'var(--font-body)',
+                  background: 'rgba(224,85,85,0.08)',
+                  border: '1px solid rgba(224,85,85,0.2)',
+                  borderRadius: 2, padding: '9px 12px', lineHeight: 1.5,
+                }}>{error}</p>
+              )}
+              <button
+                type="submit"
+                disabled={loading}
+                style={{
+                  background: loading ? 'transparent' : 'var(--accent)',
+                  border: `1px solid ${loading ? 'var(--accent-dim)' : 'var(--accent)'}`,
+                  borderRadius: 2, padding: '12px',
+                  color: loading ? 'var(--accent)' : '#0a0a0a',
+                  fontFamily: 'var(--font-body)',
+                  fontSize: 12, fontWeight: 600,
+                  letterSpacing: '0.14em', textTransform: 'uppercase',
+                  cursor: loading ? 'default' : 'pointer',
+                  transition: 'all 0.18s', marginTop: 4,
+                }}
+              >{loading ? 'Sending…' : 'Send Reset Link'}</button>
+              <button
+                type="button"
+                onClick={() => { setMode('signin'); setError(null) }}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+                  fontSize: 12, letterSpacing: '0.06em',
+                }}
+              >← Back to sign in</button>
+            </form>
+          )
+        ) : magicSent ? (
           <div style={{ textAlign: 'center', padding: '20px 0' }}>
             <div style={{
               width: 40, height: 40, borderRadius: '50%',
@@ -266,6 +372,22 @@ export default function AuthModal({ onAuth }: Props) {
               </p>
             )}
 
+            {mode === 'signin' && (
+              <div style={{ textAlign: 'right', marginTop: -10 }}>
+                <button
+                  type="button"
+                  onClick={() => { setMode('forgot'); setError(null) }}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--muted)', fontFamily: 'var(--font-body)',
+                    fontSize: 12, letterSpacing: '0.04em',
+                    transition: 'color 0.15s',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
+                >Forgot password?</button>
+              </div>
+            )}
             <button
               type="submit"
               disabled={loading}
@@ -292,7 +414,7 @@ export default function AuthModal({ onAuth }: Props) {
                 : 'Send Magic Link'}
             </button>
           </form>
-        )}
+        ) }
 
         <div style={{
           marginTop: 24,
@@ -311,6 +433,21 @@ export default function AuthModal({ onAuth }: Props) {
             We claim{' '}
             <span style={{ color: 'var(--text-dim)' }}>no rights</span>{' '}
             to your work — your IP is yours, always.
+          </p>
+          <p style={{
+            textAlign: 'center', marginTop: 10,
+            fontSize: 11, color: 'var(--muted)',
+            fontFamily: 'var(--font-body)',
+          }}>
+            <a href="/privacy" style={{ color: 'var(--muted)', textDecoration: 'none' }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
+            >Privacy Policy</a>
+            {' · '}
+            <a href="/terms" style={{ color: 'var(--muted)', textDecoration: 'none' }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
+            >Terms of Service</a>
           </p>
         </div>
       </div>

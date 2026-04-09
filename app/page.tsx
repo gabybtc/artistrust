@@ -83,6 +83,10 @@ export default function Home() {
         showToast('Card saved — you can now upload beyond your monthly limit.')
         window.history.replaceState({}, '', '/')
       }
+      if (params.get('passwordReset') === 'success') {
+        showToast('Password updated successfully.')
+        window.history.replaceState({}, '', '/')
+      }
     }
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
@@ -1305,6 +1309,7 @@ export default function Home() {
           userEmail={user.email ?? ''}
           onClose={() => setProfileOpen(false)}
           onSaved={() => showToast('Profile saved')}
+          onSignOut={() => { setUser(null); setProfileOpen(false) }}
         />
       )}
 
@@ -1380,6 +1385,23 @@ export default function Home() {
             {text}
           </span>
         ))}
+
+        {/* Policy links — pointer events re-enabled just for these */}
+        <span style={{ display: 'flex', gap: 14, pointerEvents: 'auto' }}>
+          {[['Privacy', '/privacy'], ['Terms', '/terms']].map(([label, href]) => (
+            <a
+              key={label}
+              href={href}
+              style={{
+                fontSize: 10, letterSpacing: '0.07em',
+                color: 'var(--muted)', fontFamily: 'var(--font-body)',
+                textDecoration: 'none', transition: 'color 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
+            >{label}</a>
+          ))}
+        </span>
       </div>
 
       {pricingOpen && process.env.NEXT_PUBLIC_BILLING_ENABLED === 'true' && (
@@ -1422,7 +1444,7 @@ export default function Home() {
               {overageError !== 'no_payment_method' && <>
                 Your saved card will be charged{' '}
                 <strong style={{ color: '#f5f5f5' }}>${uploadQueue.pendingOverageCost.toFixed(2)}</strong>
-                {' '}($0.05 per upload).
+                {' '}($0.05 per upload, $0.50 minimum).
               </>}
             </p>
             {overageError && (

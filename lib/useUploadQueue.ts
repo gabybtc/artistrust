@@ -24,7 +24,7 @@ import { Artwork, UploadDefaults } from './types'
 import { uploadImage, compressFileForAnalysis, compressFileForStorage } from './uploadImage'
 import { extractExif, exifToTags } from './extractExif'
 import { parseHints } from './parseFileName'
-import { OVERAGE_COST_USD } from './plans'
+import { OVERAGE_COST_USD, OVERAGE_MIN_CHARGE_USD } from './plans'
 // ─── Tuneable constants ───────────────────────────────────────────────────────
 const UPLOAD_CONCURRENCY  = 3   // simultaneous full-pipeline workers
 const ANALYSIS_CONCURRENCY = 2  // simultaneous Claude API calls within those workers
@@ -315,7 +315,7 @@ export function useUploadQueue(options: {
         // All are overage — hold for confirmation
         pendingOverageRef.current = files
         setPendingOverageCount(files.length)
-        setPendingOverageCost(Math.round(files.length * OVERAGE_COST_USD * 100) / 100)
+        setPendingOverageCost(Math.max(OVERAGE_MIN_CHARGE_USD, Math.round(files.length * OVERAGE_COST_USD * 100) / 100))
         return
       }
       if (remaining < files.length) {
@@ -324,7 +324,7 @@ export function useUploadQueue(options: {
         files = files.slice(0, remaining)
         pendingOverageRef.current = overageFiles
         setPendingOverageCount(overageFiles.length)
-        setPendingOverageCost(Math.round(overageFiles.length * OVERAGE_COST_USD * 100) / 100)
+        setPendingOverageCost(Math.max(OVERAGE_MIN_CHARGE_USD, Math.round(overageFiles.length * OVERAGE_COST_USD * 100) / 100))
       }
     }
     const newItems: QueueItem[] = files.map(f => ({

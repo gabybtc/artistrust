@@ -3,6 +3,11 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 import { getSubscription } from '@/lib/db'
 import { canUploadMore, MONTHLY_UPLOAD_LIMITS } from '@/lib/plans'
+import { RateLimiter } from '@/lib/rateLimit'
+
+// 20 analysis calls per IP per minute — generous for normal use,
+// stops runaway loops or bad actors from burning the Claude budget.
+const limiter = new RateLimiter(20, 60_000)
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -10,6 +15,15 @@ const client = new Anthropic({
 
 export async function POST(req: NextRequest) {
   try {
+    // Rate limit by IP
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+    if (!limiter.check(ip)) {
+      return NextResponse.json(
+        { error: 'RATE_LIMIT', message: 'Too many requests. Please slow down.' },
+        { status: 429 }
+      )
+    }
+
     // Authenticate the request
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (serviceKey) {

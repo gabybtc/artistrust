@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'no_payment_method' }, { status: 402 })
   }
 
-  const amountCents = Math.round(count * OVERAGE_COST_USD * 100)
+  const amountCents = Math.max(50, Math.round(count * OVERAGE_COST_USD * 100))
 
   try {
     const pi = await stripe.paymentIntents.create({
@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
       currency: 'usd',
       customer: sub.stripeCustomerId,
       payment_method: defaultPm,
+      receipt_email: user.email ?? undefined,
       confirm: true,
       off_session: true,
       description: `ArtisTrust overage — ${count} upload${count === 1 ? '' : 's'}`,

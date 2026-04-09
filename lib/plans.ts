@@ -16,6 +16,9 @@ export const MONTHLY_UPLOAD_LIMITS: Record<Plan, number | null> = {
 /** Cost in USD charged per upload that exceeds the monthly plan limit */
 export const OVERAGE_COST_USD = 0.05
 
+/** Stripe's minimum charge amount — batches smaller than this are rounded up */
+export const OVERAGE_MIN_CHARGE_USD = 0.50
+
 // ── Stripe price IDs (set in env) ────────────────────────────────────────────
 // NEXT_PUBLIC_ prefix so they are safely readable on the client for checkout.
 
