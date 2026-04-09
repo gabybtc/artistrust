@@ -80,8 +80,8 @@ export async function POST(req: NextRequest) {
 
       // Keep current_period_end so the user retains access until their paid period expires.
       // A scheduled job / next login will downgrade them once the date passes.
-      const periodEnd = sub.current_period_end
-        ? new Date(sub.current_period_end * 1000).toISOString()
+      const periodEnd = sub.items.data[0]?.current_period_end
+        ? new Date(sub.items.data[0].current_period_end * 1000).toISOString()
         : null
 
       await admin.from('subscriptions').upsert({
