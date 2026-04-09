@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   const count = Math.max(1, Math.floor(Number(body.count) || 1))
 
   // Look up Stripe customer
-  const sub = await getSubscription(user.id)
+  const sub = await getSubscription(user.id, admin)
   if (!sub?.stripeCustomerId) {
     return NextResponse.json({ error: 'no_payment_method' }, { status: 402 })
   }

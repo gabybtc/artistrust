@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await admin.auth.getUser(authHeader.replace('Bearer ', ''))
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const sub = await getSubscription(user.id)
+  const sub = await getSubscription(user.id, admin)
   if (!sub?.stripeCustomerId) {
     return NextResponse.json({ error: 'No billing account found' }, { status: 404 })
   }

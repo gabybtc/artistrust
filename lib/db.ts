@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { SupabaseClient } from '@supabase/supabase-js'
 import type { Artwork, LegalSettings, ProfileSettings, AccessGrant, Tab, UserSubscription } from './types'
 import type { ExifData } from './extractExif'
 import type { Plan, BillingInterval } from './plans'
@@ -331,8 +332,8 @@ export async function saveTabSettings(userId: string, tabs: Tab[]): Promise<void
 
 // ── Subscriptions ─────────────────────────────────────────────────────────────
 
-export async function getSubscription(userId: string): Promise<UserSubscription | null> {
-  const { data, error } = await supabase
+export async function getSubscription(userId: string, client?: SupabaseClient): Promise<UserSubscription | null> {
+  const { data, error } = await (client ?? supabase)
     .from('subscriptions')
     .select('*')
     .eq('user_id', userId)

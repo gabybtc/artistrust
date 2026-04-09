@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     const { plan, interval } = body
     if (!plan || !interval) return NextResponse.json({ error: 'Missing plan/interval' }, { status: 400 })
 
-    const sub = await getSubscription(user.id)
+    const sub = await getSubscription(user.id, admin)
 
     // ── Downgrade to preserve: cancel the Stripe subscription ────────────
     if (plan === 'preserve') {
