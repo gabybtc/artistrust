@@ -113,17 +113,21 @@ export function useUploadQueue(options: {
   const pendingOverageRef = useRef<File[]>([])
 
   // Refs let callbacks always see fresh values without stale closures
-  const itemsRef     = useRef<QueueItem[]>([])
-  const pausedRef    = useRef(false)
-  const activeTabRef = useRef(activeTab)
-  const userIdRef    = useRef(userId)
-  const defaultsRef  = useRef<UploadDefaults>(defaults ?? {})
+  const itemsRef          = useRef<QueueItem[]>([])
+  const pausedRef         = useRef(false)
+  const activeTabRef      = useRef(activeTab)
+  const userIdRef         = useRef(userId)
+  const defaultsRef       = useRef<UploadDefaults>(defaults ?? {})
+  const monthlyUsedRef    = useRef<number>(monthlyUploadsUsed ?? 0)
+  const monthlyLimitRef   = useRef<number | null | undefined>(monthlyUploadLimit)
   // Track how many slots are actively running (read/upload/analyze)
   const activeCount  = useRef(0)
 
   useEffect(() => { activeTabRef.current = activeTab }, [activeTab])
   useEffect(() => { userIdRef.current = userId }, [userId])
   useEffect(() => { defaultsRef.current = defaults ?? {} }, [defaults])
+  useEffect(() => { monthlyUsedRef.current = monthlyUploadsUsed ?? 0 }, [monthlyUploadsUsed])
+  useEffect(() => { monthlyLimitRef.current = monthlyUploadLimit }, [monthlyUploadLimit])
 
   // Rate-limit simultaneous Claude API calls (storage uploads use activeCount)
   const analysisSem = useRef(makeSemaphore(ANALYSIS_CONCURRENCY))
@@ -301,11 +305,12 @@ export function useUploadQueue(options: {
     let files = [...inputFiles]
     if (!userIdRef.current) return
 
-    // Monthly upload limit check
-    if (monthlyUploadLimit !== null && monthlyUploadLimit !== undefined) {
+    // Monthly upload limit check — read from refs so we always see current values
+    const limit = monthlyLimitRef.current
+    if (limit !== null && limit !== undefined) {
       const alreadyQueued = itemsRef.current.filter(i => i.state !== 'done' && i.state !== 'error').length
-      const monthlyBase = (monthlyUploadsUsed ?? 0) + alreadyQueued
-      const remaining = Math.max(0, monthlyUploadLimit - monthlyBase)
+      const monthlyBase = monthlyUsedRef.current + alreadyQueued
+      const remaining = Math.max(0, limit - monthlyBase)
       if (remaining === 0) {
         // All are overage — hold for confirmation
         pendingOverageRef.current = files

@@ -78,12 +78,18 @@ export async function POST(req: NextRequest) {
       const userId = sub.metadata?.supabase_user_id
       if (!userId) break
 
+      // Keep current_period_end so the user retains access until their paid period expires.
+      // A scheduled job / next login will downgrade them once the date passes.
+      const periodEnd = sub.current_period_end
+        ? new Date(sub.current_period_end * 1000).toISOString()
+        : null
+
       await admin.from('subscriptions').upsert({
         user_id: userId,
         plan: 'preserve',
         billing_interval: null,
         stripe_subscription_id: null,
-        current_period_end: null,
+        current_period_end: periodEnd,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id' })
       break

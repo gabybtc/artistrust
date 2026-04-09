@@ -95,6 +95,7 @@ create index if not exists artworks_is_public_idx on artworks(is_public) where i
 alter table artworks add column if not exists series    text default '';
 alter table artworks add column if not exists exif_data jsonb;
 alter table artworks add column if not exists tags      jsonb default '[]';
+alter table artworks add column if not exists editions  text default '';
 
 -- ============================================================
 -- Storage bucket setup (do this in the Storage UI or here)
