@@ -112,9 +112,16 @@ export default function Home() {
       // Logged-in user arriving with ?plan= from marketing site — open PricingModal
       const params = new URLSearchParams(window.location.search)
       const plan = params.get('plan')
+      const interval = params.get('interval')
       if (plan === 'studio' || plan === 'archive') {
-        setPricingOpen(true)
         window.history.replaceState({}, '', '/')
+        if (interval === 'monthly' || interval === 'annual') {
+          // email confirmation flow: plan+interval both known, go straight to Stripe
+          subscription.openCheckout(plan, interval)
+            .catch(() => setPricingOpen(true))
+        } else {
+          setPricingOpen(true)
+        }
       }
     }
   }, [mounted, user]) // eslint-disable-line react-hooks/exhaustive-deps

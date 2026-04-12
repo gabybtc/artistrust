@@ -97,10 +97,17 @@ export default function AuthModal({ onAuth, standalone, defaultView, planIntent,
         if (error) throw error
         setResetSent(true)
       } else if (mode === 'signup') {
+        const confirmRedirect = new URLSearchParams()
+        if (planIntent) {
+          confirmRedirect.set('plan', planIntent)
+          if (intervalIntent) confirmRedirect.set('interval', intervalIntent)
+        }
+        const emailRedirectTo = window.location.origin +
+          (planIntent ? '/?' + confirmRedirect.toString() : '/')
         const { data: signUpData, error } = await supabase.auth.signUp({
           email, password,
           options: {
-            emailRedirectTo: window.location.origin,
+            emailRedirectTo,
             data: { full_name: name },
           },
         })
