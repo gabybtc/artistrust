@@ -178,16 +178,18 @@ export default function Home() {
     setArtworks(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a))
   }, [])
 
+  const monthlyUploadsUsed = useMemo(() => {
+    const start = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1))
+    return artworks.filter(a => new Date(a.uploadedAt) >= start).length
+  }, [artworks])
+
   const uploadQueue = useUploadQueue({
     userId: user?.id ?? null,
     activeTab,
     onArtworkAdded,
     onArtworkUpdated,
     defaults: uploadDefaults.defaults,
-    monthlyUploadsUsed: useMemo(() => {
-      const start = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1))
-      return artworks.filter(a => new Date(a.uploadedAt) >= start).length
-    }, [artworks]),
+    monthlyUploadsUsed,
     monthlyUploadLimit: subscription.monthlyUploadLimit,
     onPlanLimit: () => openPricing('upload_limit'),
   })
@@ -1343,10 +1345,7 @@ export default function Home() {
           onSaved={() => showToast('Profile saved')}
           onSignOut={() => { setUser(null); setProfileOpen(false) }}
           subscription={subscription.subscription}
-          monthlyUploadsUsed={useMemo(() => {
-            const start = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1))
-            return artworks.filter(a => new Date(a.uploadedAt) >= start).length
-          }, [artworks])}
+          monthlyUploadsUsed={monthlyUploadsUsed}
           onOpenPricing={() => { setProfileOpen(false); openPricing() }}
         />
       )}
