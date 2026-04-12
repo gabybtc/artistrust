@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { getProfileSettings, saveProfileSettings } from '@/lib/db'
 import type { ProfileSettings } from '@/lib/types'
+import type { UserSubscription } from '@/lib/types'
+import { planLabel, PLAN_CONFIG } from '@/lib/plans'
 
 interface Props {
   userId: string
@@ -10,6 +12,9 @@ interface Props {
   onClose: () => void
   onSaved: () => void
   onSignOut: () => void
+  subscription?: UserSubscription | null
+  monthlyUploadsUsed?: number
+  onOpenPricing?: () => void
 }
 
 const empty: ProfileSettings = {
@@ -44,10 +49,11 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 6,
 }
 
-export default function ProfileModal({ userId, userEmail, onClose, onSaved, onSignOut }: Props) {
+export default function ProfileModal({ userId, userEmail, onClose, onSaved, onSignOut, subscription, monthlyUploadsUsed, onOpenPricing }: Props) {
   const [form, setForm] = useState<ProfileSettings>(empty)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [section, setSection] = useState<'profile' | 'billing'>('profile')
   const [passwordSection, setPasswordSection] = useState(false)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -206,8 +212,40 @@ export default function ProfileModal({ userId, userEmail, onClose, onSaved, onSi
             </div>
           </div>
 
+          {/* Section tabs */}
+          <div style={{
+            display: 'flex', gap: 2, marginBottom: 28,
+            background: 'var(--bg)', borderRadius: 2, padding: 3,
+          }}>
+            {(['profile', 'billing'] as const).map(s => (
+              <button
+                key={s}
+                onClick={() => setSection(s)}
+                style={{
+                  flex: 1,
+                  background: section === s ? 'var(--surface)' : 'transparent',
+                  border: section === s ? '1px solid var(--border)' : '1px solid transparent',
+                  borderRadius: 1, padding: '7px 4px',
+                  color: section === s ? 'var(--text)' : 'var(--text-dim)',
+                  fontFamily: 'var(--font-body)',
+                  fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  cursor: 'pointer', transition: 'all 0.15s',
+                }}
+              >
+                {s === 'profile' ? 'Profile' : 'Billing'}
+              </button>
+            ))}
+          </div>
+
+          {section === 'billing' && <BillingSection
+            subscription={subscription ?? null}
+            monthlyUploadsUsed={monthlyUploadsUsed}
+            onOpenPricing={onOpenPricing}
+            onPortalError={() => {}}
+          />}
+
           {/* Profile fields */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {section === 'profile' && <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
 
             <div>
               <label style={labelStyle}>Full Name</label>
@@ -285,10 +323,10 @@ export default function ProfileModal({ userId, userEmail, onClose, onSaved, onSi
             >
               {saving ? 'Saving…' : 'Save Profile'}
             </button>
-          </div>
+          </div>}
 
           {/* Password section */}
-          <div style={{ marginTop: 28, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
+          {section === 'profile' && <div style={{ marginTop: 28, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
             <button
               onClick={() => setPasswordSection(p => !p)}
               style={{
@@ -385,10 +423,10 @@ export default function ProfileModal({ userId, userEmail, onClose, onSaved, onSi
                 </button>
               </div>
             )}
-          </div>
+          </div>}
 
           {/* Danger zone */}
-          <div style={{ marginTop: 28, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
+          {section === 'profile' && <div style={{ marginTop: 28, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
             <button
               onClick={() => { setDeleteSection(p => !p); setDeleteConfirm(''); setDeleteError(null) }}
               style={{
@@ -490,10 +528,335 @@ export default function ProfileModal({ userId, userEmail, onClose, onSaved, onSi
                 </button>
               </div>
             )}
-          </div>
+          </div>}
 
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Billing Section ──────────────────────────────────────────────────────
+
+function BillingSection({
+  subscription,
+  monthlyUploadsUsed,
+  onOpenPricing,
+  onPortalError,
+}: {
+  subscription: UserSubscription | null
+  monthlyUploadsUsed?: number
+  onOpenPricing?: () => void
+  onPortalError: () => void
+}) {
+  const [cancelConfirm, setCancelConfirm] = useState(false)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [billingError, setBillingError] = useState<string | null>(null)
+
+  const plan = subscription?.plan ?? 'preserve'
+  const isBeta = subscription?.isBeta ?? false
+  const isPaid = plan === 'studio' || plan === 'archive'
+  const periodEnd = subscription?.currentPeriodEnd ? new Date(subscription.currentPeriodEnd) : null
+  const daysLeft = periodEnd
+    ? Math.max(0, Math.ceil((periodEnd.getTime() - Date.now()) / 86_400_000))
+    : null
+  const planCfg = PLAN_CONFIG[plan]
+  const uploadLimit = plan === 'beta' ? null : plan === 'preserve' ? 25 : plan === 'studio' ? 100 : 250
+
+  const labelStyle: React.CSSProperties = {
+    display: 'block',
+    fontFamily: 'var(--font-body)',
+    fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
+    color: 'var(--text-dim)', marginBottom: 6,
+  }
+
+  const handlePortal = async () => {
+    setActionLoading(true)
+    setBillingError(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not authenticated')
+      const res = await fetch('/api/billing/portal', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error((d as { error?: string }).error ?? 'Could not open billing portal')
+      }
+      const { url } = await res.json()
+      if (url) window.location.href = url
+    } catch (err) {
+      setBillingError(err instanceof Error ? err.message : 'Something went wrong')
+      onPortalError()
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleCancel = async () => {
+    setActionLoading(true)
+    setBillingError(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not authenticated')
+      const res = await fetch('/api/billing/checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ type: 'subscription', plan: 'preserve', interval: 'monthly' }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error((d as { error?: string }).error ?? 'Cancellation failed')
+      }
+      const data = await res.json()
+      if (data.url) {
+        window.location.href = data.url
+      } else {
+        window.location.href = '/?billing=success'
+      }
+    } catch (err) {
+      setBillingError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* Plan badge */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '14px 16px',
+        background: 'rgba(201,169,110,0.05)',
+        border: '1px solid var(--border)',
+        borderRadius: 2,
+      }}>
+        <div>
+          <label style={labelStyle}>Current Plan</label>
+          <div style={{
+            fontFamily: 'var(--font-display)', fontSize: 18,
+            fontStyle: 'italic', color: 'var(--accent)',
+          }}>
+            {isBeta ? 'Beta' : planLabel(plan)}
+          </div>
+        </div>
+        {isBeta && (
+          <span style={{
+            fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase',
+            color: 'var(--accent)', border: '1px solid var(--accent-dim)',
+            padding: '3px 8px', borderRadius: 2, fontFamily: 'var(--font-body)',
+          }}>Beta Tester</span>
+        )}
+        {isPaid && subscription?.billingInterval && (
+          <span style={{
+            fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
+            color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+          }}>{subscription.billingInterval}</span>
+        )}
+      </div>
+
+      {/* Renewal / usage */}
+      {(periodEnd || uploadLimit !== null) && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', gap: 10,
+          padding: '14px 16px',
+          border: '1px solid var(--border)',
+          borderRadius: 2,
+        }}>
+          {periodEnd && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>
+                {isPaid ? 'Renews' : 'Access until'}
+              </span>
+              <span style={{ fontSize: 13, color: 'var(--text)', fontFamily: 'var(--font-body)' }}>
+                {periodEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                {daysLeft !== null && (
+                  <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 8 }}>
+                    {daysLeft === 0 ? 'today' : `${daysLeft}d left`}
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
+          {uploadLimit !== null && monthlyUploadsUsed !== undefined && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>Uploads this month</span>
+                <span style={{ fontSize: 12, color: 'var(--text)', fontFamily: 'var(--font-body)' }}>
+                  {monthlyUploadsUsed} / {uploadLimit}
+                </span>
+              </div>
+              <div style={{
+                height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${Math.min(100, (monthlyUploadsUsed / uploadLimit) * 100)}%`,
+                  background: monthlyUploadsUsed >= uploadLimit ? '#e05555' : 'var(--accent)',
+                  borderRadius: 2, transition: 'width 0.3s',
+                }} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Key features summary */}
+      {!isBeta && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {planCfg.features.filter(f => f.included).slice(0, 4).map((f, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 12, color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+            }}>
+              <span style={{ color: 'var(--accent)', fontSize: 11, flexShrink: 0 }}>✓</span>
+              {f.label}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {billingError && (
+        <p style={{
+          fontSize: 13, color: '#e05555', fontFamily: 'var(--font-body)',
+          background: 'rgba(224,85,85,0.08)', border: '1px solid rgba(224,85,85,0.2)',
+          borderRadius: 2, padding: '9px 12px', lineHeight: 1.5, margin: 0,
+        }}>{billingError}</p>
+      )}
+
+      {/* Actions */}
+      {!isBeta && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+          {/* Upgrade / Change plan */}
+          {onOpenPricing && (
+            <button
+              onClick={onOpenPricing}
+              disabled={actionLoading}
+              style={{
+                background: isPaid ? 'transparent' : 'var(--accent)',
+                border: `1px solid ${isPaid ? 'var(--border)' : 'var(--accent)'}`,
+                borderRadius: 2, padding: '10px',
+                color: isPaid ? 'var(--text-dim)' : '#0a0a0a',
+                fontFamily: 'var(--font-body)',
+                fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase',
+                cursor: 'pointer', transition: 'all 0.18s',
+              }}
+              onMouseEnter={e => {
+                if (isPaid) {
+                  e.currentTarget.style.borderColor = 'var(--muted)'
+                  e.currentTarget.style.color = 'var(--text)'
+                }
+              }}
+              onMouseLeave={e => {
+                if (isPaid) {
+                  e.currentTarget.style.borderColor = 'var(--border)'
+                  e.currentTarget.style.color = 'var(--text-dim)'
+                }
+              }}
+            >
+              {isPaid ? 'Change Plan' : 'Upgrade Plan'}
+            </button>
+          )}
+
+          {/* Stripe portal */}
+          {isPaid && (
+            <button
+              onClick={handlePortal}
+              disabled={actionLoading}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--border)',
+                borderRadius: 2, padding: '10px',
+                color: 'var(--text-dim)',
+                fontFamily: 'var(--font-body)',
+                fontSize: 11, fontWeight: 500, letterSpacing: '0.14em', textTransform: 'uppercase',
+                cursor: actionLoading ? 'default' : 'pointer', transition: 'all 0.18s',
+              }}
+              onMouseEnter={e => {
+                if (!actionLoading) {
+                  e.currentTarget.style.borderColor = 'var(--muted)'
+                  e.currentTarget.style.color = 'var(--text)'
+                }
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.borderColor = 'var(--border)'
+                e.currentTarget.style.color = 'var(--text-dim)'
+              }}
+            >
+              {actionLoading ? 'Opening…' : 'Manage Billing & Invoices'}
+            </button>
+          )}
+
+          {/* Cancel (downgrade to Preserve) */}
+          {isPaid && !cancelConfirm && (
+            <button
+              onClick={() => setCancelConfirm(true)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--muted)', fontFamily: 'var(--font-body)',
+                fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                padding: '8px 0', textAlign: 'left', transition: 'color 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.color = '#e05555')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
+            >
+              Cancel Subscription
+            </button>
+          )}
+
+          {isPaid && cancelConfirm && (
+            <div style={{
+              padding: '14px', borderRadius: 2,
+              background: 'rgba(224,85,85,0.06)',
+              border: '1px solid rgba(224,85,85,0.2)',
+            }}>
+              <p style={{
+                fontSize: 13, color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+                lineHeight: 1.6, margin: '0 0 12px',
+              }}>
+                Your subscription will remain active until the end of the current period.
+                You&apos;ll keep access until{' '}
+                {periodEnd ? periodEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'period end'},
+                then revert to the free Preserve plan.
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => setCancelConfirm(false)}
+                  style={{
+                    flex: 1, background: 'transparent',
+                    border: '1px solid var(--border)', borderRadius: 2, padding: '8px',
+                    color: 'var(--text-dim)', fontFamily: 'var(--font-body)',
+                    fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                    cursor: 'pointer',
+                  }}
+                >Keep Plan</button>
+                <button
+                  onClick={handleCancel}
+                  disabled={actionLoading}
+                  style={{
+                    flex: 1,
+                    background: actionLoading ? 'transparent' : 'rgba(224,85,85,0.15)',
+                    border: '1px solid rgba(224,85,85,0.4)', borderRadius: 2, padding: '8px',
+                    color: '#e05555', fontFamily: 'var(--font-body)',
+                    fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                    cursor: actionLoading ? 'default' : 'pointer',
+                  }}
+                >
+                  {actionLoading ? 'Cancelling…' : 'Confirm Cancel'}
+                </button>
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
+
     </div>
   )
 }

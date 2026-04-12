@@ -1,5 +1,6 @@
 "use client"
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import type { User } from '@supabase/supabase-js'
 import { Artwork, Tab } from '@/lib/types'
 import { supabase } from '@/lib/supabase'
@@ -14,7 +15,6 @@ import { useUploadDefaults } from '@/lib/useUploadDefaults'
 import ArtworkModal from './components/ArtworkModal'
 import ArtworkCard from './components/ArtworkCard'
 import DropZone from './components/DropZone'
-import AuthModal from './components/AuthModal'
 import LegalModal from './components/LegalModal'
 import ProfileModal from './components/ProfileModal'
 import QueueDrawer from './components/QueueDrawer'
@@ -65,6 +65,7 @@ export default function Home() {
   const [profileFullName, setProfileFullName] = useState<string | undefined>(undefined)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const router = useRouter()
 
   // Auth: detect session on mount and watch for changes
   useEffect(() => {
@@ -93,6 +94,30 @@ export default function Home() {
     })
     return () => subscription.unsubscribe()
   }, [])
+
+  // Handle auth-gating and ?plan= intent
+  useEffect(() => {
+    if (!mounted) return
+    if (!user) {
+      const params = new URLSearchParams(window.location.search)
+      const plan = params.get('plan')
+      const interval = params.get('interval')
+      if (plan === 'studio' || plan === 'archive') {
+        const q = new URLSearchParams({ plan, ...(interval ? { interval } : {}) })
+        router.push('/signup?' + q.toString())
+      } else {
+        router.push('/login')
+      }
+    } else {
+      // Logged-in user arriving with ?plan= from marketing site — open PricingModal
+      const params = new URLSearchParams(window.location.search)
+      const plan = params.get('plan')
+      if (plan === 'studio' || plan === 'archive') {
+        setPricingOpen(true)
+        window.history.replaceState({}, '', '/')
+      }
+    }
+  }, [mounted, user]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load artworks from DB when user signs in; clear when signed out.
   // Reset any artworks stuck in transient upload/analysis states from a
@@ -1310,6 +1335,12 @@ export default function Home() {
           onClose={() => setProfileOpen(false)}
           onSaved={() => showToast('Profile saved')}
           onSignOut={() => { setUser(null); setProfileOpen(false) }}
+          subscription={subscription.subscription}
+          monthlyUploadsUsed={useMemo(() => {
+            const start = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1))
+            return artworks.filter(a => new Date(a.uploadedAt) >= start).length
+          }, [artworks])}
+          onOpenPricing={() => { setProfileOpen(false); openPricing() }}
         />
       )}
 
@@ -1539,13 +1570,7 @@ export default function Home() {
       )}
 
       {/* Auth gate — shown when not signed in */}
-      {mounted && !user && (
-        <AuthModal onAuth={() =>
-          supabase.auth.getSession().then(({ data }) =>
-            setUser(data.session?.user ?? null)
-          )
-        } />
-      )}
+
     </>
   )
 }

@@ -1,15 +1,21 @@
 'use client'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { PLAN_CONFIG } from '@/lib/plans'
+import type { Plan, BillingInterval } from '@/lib/plans'
 
-type Mode = 'signin' | 'signup' | 'magic' | 'forgot'
+type Mode = 'signin' | 'signup' | 'magic' | 'forgot' | 'plan'
 
 interface Props {
   onAuth: () => void
+  standalone?: boolean
+  defaultView?: 'signin' | 'signup' | 'magic'
+  planIntent?: Plan
+  intervalIntent?: BillingInterval
 }
 
-export default function AuthModal({ onAuth }: Props) {
-  const [mode, setMode] = useState<Mode>('signin')
+export default function AuthModal({ onAuth, standalone, defaultView, planIntent, intervalIntent }: Props) {
+  const [mode, setMode] = useState<Mode>(defaultView ?? 'signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
@@ -18,6 +24,33 @@ export default function AuthModal({ onAuth }: Props) {
   const [magicSent, setMagicSent] = useState(false)
   const [resetSent, setResetSent] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [planInterval, setPlanInterval] = useState<BillingInterval>(intervalIntent ?? 'monthly')
+  const [checkoutLoading, setCheckoutLoading] = useState(false)
+
+  const triggerCheckout = async (plan: Plan, interval: BillingInterval) => {
+    setCheckoutLoading(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not authenticated')
+      const res = await fetch('/api/billing/checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ type: 'subscription', plan, interval }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data as { error?: string }).error ?? 'Checkout failed')
+      }
+      const data = await res.json()
+      if (data.url) window.location.href = data.url
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Checkout failed')
+      setCheckoutLoading(false)
+    }
+  }
 
   const inputStyle: React.CSSProperties = {
     width: '100%',
@@ -89,6 +122,12 @@ export default function AuthModal({ onAuth }: Props) {
         const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password })
         if (signInErr) {
           setError('Account created — check your email to confirm, then sign in.')
+        } else if (planIntent) {
+          if (intervalIntent) {
+            await triggerCheckout(planIntent, intervalIntent)
+          } else {
+            setMode('plan')
+          }
         } else {
           onAuth()
         }
@@ -104,21 +143,16 @@ export default function AuthModal({ onAuth }: Props) {
     }
   }
 
-  return (
+  const planConfig = planIntent ? PLAN_CONFIG[planIntent] : null
+
+  const card = (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 100,
-      background: 'rgba(10,10,10,0.97)',
-      backdropFilter: 'blur(16px)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '20px',
+      width: '100%', maxWidth: 400,
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 2,
+      padding: '44px 40px 40px',
     }}>
-      <div style={{
-        width: '100%', maxWidth: 400,
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 2,
-        padding: '44px 40px 40px',
-      }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 36 }}>
           <h1 style={{
@@ -456,6 +490,204 @@ export default function AuthModal({ onAuth }: Props) {
           </p>
         </div>
       </div>
+  )
+
+  // ── Plan / interval picker view ────────────────────────────────────────────
+  if (mode === 'plan' && planConfig && planIntent) {
+    const monthlyPrice = planConfig.monthlyPrice
+    const annualTotal = (planConfig as { annualTotal?: number }).annualTotal ?? 0
+    const annualMonthlyPrice = (planConfig as { annualMonthlyPrice?: number }).annualMonthlyPrice ?? 0
+
+    const planCard = (
+      <div style={{
+        width: '100%', maxWidth: 400,
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 2,
+        padding: '44px 40px 40px',
+      }}>
+        {/* Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <h1 style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 26, fontWeight: 400, fontStyle: 'italic',
+            letterSpacing: '0.01em', color: 'var(--text)', marginBottom: 6,
+          }}>ArtisTrust</h1>
+          <div style={{
+            marginTop: 20, height: 1,
+            background: 'linear-gradient(90deg, transparent, var(--accent-dim), transparent)',
+            opacity: 0.4,
+          }} />
+        </div>
+
+        <p style={{
+          textAlign: 'center', marginBottom: 6,
+          fontFamily: 'var(--font-body)',
+          fontSize: 11, letterSpacing: '0.16em', textTransform: 'uppercase',
+          color: 'var(--text-dim)',
+        }}>Account created — choose your plan</p>
+        <p style={{
+          textAlign: 'center', marginBottom: 24,
+          fontFamily: 'var(--font-display)',
+          fontSize: 20, fontStyle: 'italic',
+          color: 'var(--accent)',
+        }}>{planConfig.label}</p>
+
+        {/* Monthly / Annual toggle */}
+        <div style={{
+          display: 'flex', gap: 2, marginBottom: 24,
+          background: 'var(--bg)', borderRadius: 2, padding: 3,
+        }}>
+          {(['monthly', 'annual'] as BillingInterval[]).map(iv => (
+            <button
+              key={iv}
+              onClick={() => setPlanInterval(iv)}
+              style={{
+                flex: 1, position: 'relative',
+                background: planInterval === iv ? 'var(--surface)' : 'transparent',
+                border: planInterval === iv ? '1px solid var(--border)' : '1px solid transparent',
+                borderRadius: 1, padding: '7px 4px',
+                color: planInterval === iv ? 'var(--text)' : 'var(--text-dim)',
+                fontFamily: 'var(--font-body)',
+                fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase',
+                cursor: 'pointer', transition: 'all 0.15s',
+              }}
+            >
+              {iv === 'monthly' ? 'Monthly' : 'Annual'}
+              {iv === 'annual' && (
+                <span style={{
+                  marginLeft: 6, fontSize: 9, letterSpacing: '0.08em',
+                  color: 'var(--accent)', opacity: 0.9,
+                }}>−20%</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Price display */}
+        <div style={{
+          textAlign: 'center', marginBottom: 20,
+          padding: '16px',
+          background: 'rgba(201,169,110,0.05)',
+          border: '1px solid var(--border)',
+          borderRadius: 2,
+        }}>
+          {planInterval === 'monthly' ? (
+            <>
+              <span style={{
+                fontFamily: 'var(--font-display)', fontSize: 32,
+                fontStyle: 'italic', color: 'var(--text)',
+              }}>${monthlyPrice}</span>
+              <span style={{
+                fontFamily: 'var(--font-body)', fontSize: 13,
+                color: 'var(--text-dim)', marginLeft: 4,
+              }}>/month</span>
+            </>
+          ) : (
+            <>
+              <span style={{
+                fontFamily: 'var(--font-display)', fontSize: 32,
+                fontStyle: 'italic', color: 'var(--text)',
+              }}>${annualMonthlyPrice}</span>
+              <span style={{
+                fontFamily: 'var(--font-body)', fontSize: 13,
+                color: 'var(--text-dim)', marginLeft: 4,
+              }}>/month</span>
+              <div style={{
+                fontSize: 11, color: 'var(--muted)',
+                fontFamily: 'var(--font-body)', marginTop: 4,
+              }}>
+                Billed as ${annualTotal}/year
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Key features */}
+        <div style={{ marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {planConfig.features.filter(f => f.included).map((f, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 13, color: 'var(--text-dim)',
+              fontFamily: 'var(--font-body)',
+            }}>
+              <span style={{ color: 'var(--accent)', fontSize: 12, flexShrink: 0 }}>✓</span>
+              {f.label}
+            </div>
+          ))}
+        </div>
+
+        {error && (
+          <p style={{
+            fontSize: 13, color: '#e05555',
+            fontFamily: 'var(--font-body)',
+            background: 'rgba(224,85,85,0.08)',
+            border: '1px solid rgba(224,85,85,0.2)',
+            borderRadius: 2, padding: '9px 12px', lineHeight: 1.5, marginBottom: 14,
+          }}>{error}</p>
+        )}
+
+        <button
+          onClick={() => triggerCheckout(planIntent!, planInterval)}
+          disabled={checkoutLoading}
+          style={{
+            width: '100%',
+            background: checkoutLoading ? 'transparent' : 'var(--accent)',
+            border: `1px solid ${checkoutLoading ? 'var(--accent-dim)' : 'var(--accent)'}`,
+            borderRadius: 2, padding: '12px',
+            color: checkoutLoading ? 'var(--accent)' : '#0a0a0a',
+            fontFamily: 'var(--font-body)',
+            fontSize: 12, fontWeight: 600,
+            letterSpacing: '0.14em', textTransform: 'uppercase',
+            cursor: checkoutLoading ? 'default' : 'pointer',
+            transition: 'all 0.18s',
+          }}
+        >
+          {checkoutLoading ? 'Redirecting…' : 'Continue to Payment'}
+        </button>
+
+        <button
+          type="button"
+          onClick={onAuth}
+          style={{
+            display: 'block', width: '100%', marginTop: 12,
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--muted)', fontFamily: 'var(--font-body)',
+            fontSize: 12, letterSpacing: '0.04em', textAlign: 'center',
+            transition: 'color 0.15s',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
+        >
+          Skip for now — go to my archive
+        </button>
+      </div>
+    )
+
+    if (standalone) return planCard
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(10,10,10,0.97)',
+        backdropFilter: 'blur(16px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '20px',
+      }}>
+        {planCard}
+      </div>
+    )
+  }
+
+  if (standalone) return card
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      background: 'rgba(10,10,10,0.97)',
+      backdropFilter: 'blur(16px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: '20px',
+    }}>
+      {card}
     </div>
   )
 }
