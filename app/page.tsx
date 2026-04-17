@@ -81,6 +81,17 @@ export default function Home() {
       if (params.get('billing') === 'success') {
         showToast('Plan upgraded successfully!')
         window.history.replaceState({}, '', '/')
+        // Send verification email after payment if not yet verified
+        supabase.auth.getSession().then(({ data }) => {
+          const u = data.session?.user
+          if (u && !u.email_confirmed_at) {
+            const key = `at_verify_sent_${u.id}`
+            if (!localStorage.getItem(key)) {
+              localStorage.setItem(key, '1')
+              supabase.auth.resend({ type: 'signup', email: u.email! }).catch(() => { /* non-critical */ })
+            }
+          }
+        })
       }
       if (params.get('card') === 'saved') {
         showToast('Card saved — you can now upload beyond your monthly limit.')
@@ -168,6 +179,17 @@ export default function Home() {
     await supabase.auth.resend({ type: 'signup', email: user.email })
     setResendState('sent')
   }, [user, resendState])
+
+  // Auto-send the verification email once when an unverified user first reaches
+  // the dashboard. Uses localStorage to avoid resending on every page reload.
+  useEffect(() => {
+    if (!user || user.email_confirmed_at) return
+    const key = `at_verify_sent_${user.id}`
+    if (typeof window !== 'undefined' && !localStorage.getItem(key)) {
+      localStorage.setItem(key, '1')
+      supabase.auth.resend({ type: 'signup', email: user.email! }).catch(() => { /* non-critical */ })
+    }
+  }, [user])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)

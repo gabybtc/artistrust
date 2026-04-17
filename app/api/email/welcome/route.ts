@@ -71,7 +71,7 @@ function buildHtml(name: string): string {
           <tr>
             <td style="padding:36px 40px 28px; border-bottom:1px solid #2a2a2a; text-align:center;">
               <p style="margin:0; font-family:Georgia,'Times New Roman',serif; font-size:22px; font-style:italic; font-weight:400; color:#e8e8e8; letter-spacing:0.02em;">
-                ArtisTrust
+                Artis<span style="color:#c9a96e;">Trust</span>
               </p>
             </td>
           </tr>
