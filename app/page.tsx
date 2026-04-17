@@ -64,6 +64,7 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<'grid' | 'cluster'>('grid')
   const [profileFullName, setProfileFullName] = useState<string | undefined>(undefined)
   const [verifyBannerDismissed, setVerifyBannerDismissed] = useState(false)
+  const [emailVerified, setEmailVerified] = useState<boolean | null>(null)
   const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle')
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -81,17 +82,11 @@ export default function Home() {
       if (params.get('billing') === 'success') {
         showToast('Plan upgraded successfully!')
         window.history.replaceState({}, '', '/')
-        // Send verification email after payment if not yet verified
-        supabase.auth.getSession().then(({ data }) => {
-          const u = data.session?.user
-          if (u && !u.email_confirmed_at) {
-            const key = `at_verify_sent_${u.id}`
-            if (!localStorage.getItem(key)) {
-              localStorage.setItem(key, '1')
-              supabase.auth.resend({ type: 'signup', email: u.email! }).catch(() => { /* non-critical */ })
-            }
-          }
-        })
+      }
+      if (params.get('emailVerified') === 'true') {
+        setEmailVerified(true)
+        showToast('Email verified — thank you!')
+        window.history.replaceState({}, '', '/')
       }
       if (params.get('card') === 'saved') {
         showToast('Card saved — you can now upload beyond your monthly limit.')
@@ -161,6 +156,7 @@ export default function Home() {
     })
     getProfileSettings(user.id).then(profile => {
       if (profile?.fullName) setProfileFullName(profile.fullName)
+      setEmailVerified(profile?.emailVerified === true)
     })
   }, [user])
 
@@ -173,23 +169,32 @@ export default function Home() {
     }, 1500)
   }, [artworks, user, mounted])
 
+  const sendVerifyEmail = useCallback(async () => {
+    const { data } = await supabase.auth.getSession()
+    if (!data.session) return
+    await fetch('/api/email/verify-send', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${data.session.access_token}` },
+    })
+  }, [])
+
   const resendVerification = useCallback(async () => {
     if (!user?.email || resendState !== 'idle') return
     setResendState('sending')
-    await supabase.auth.resend({ type: 'signup', email: user.email })
+    await sendVerifyEmail()
     setResendState('sent')
-  }, [user, resendState])
+  }, [user, resendState, sendVerifyEmail])
 
   // Auto-send the verification email once when an unverified user first reaches
-  // the dashboard. Uses localStorage to avoid resending on every page reload.
+  // the dashboard. Uses localStorage to avoid sending on every page reload.
   useEffect(() => {
-    if (!user || user.email_confirmed_at) return
+    if (!user || emailVerified !== false) return
     const key = `at_verify_sent_${user.id}`
     if (typeof window !== 'undefined' && !localStorage.getItem(key)) {
       localStorage.setItem(key, '1')
-      supabase.auth.resend({ type: 'signup', email: user.email! }).catch(() => { /* non-critical */ })
+      sendVerifyEmail().catch(() => { /* non-critical */ })
     }
-  }, [user])
+  }, [user, emailVerified, sendVerifyEmail])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -449,7 +454,7 @@ export default function Home() {
     allTags:   [...new Set(artworks.flatMap(a => a.tags ?? []))].sort(),
   }
 
-  const showVerifyBanner = !!user && !user.email_confirmed_at && !verifyBannerDismissed
+  const showVerifyBanner = !!user && emailVerified === false && !verifyBannerDismissed
 
   return (
     <>

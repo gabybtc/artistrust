@@ -61,6 +61,7 @@ export interface ProfileSettings {
   studioName: string
   website: string
   bio: string
+  emailVerified?: boolean
 }
 
 /**
