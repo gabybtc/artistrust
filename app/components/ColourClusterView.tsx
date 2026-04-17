@@ -708,46 +708,10 @@ export default function ColourClusterView({ artworks, onSelect, onUpdate }: Prop
           </>
         )}
 
-        {/* Timeline decorations — period mode only */}
-        {mode === 'period' && (
-          <>
-            {/* Centre / baseline */}
-            <div style={{
-              position: 'absolute', top: timelinePlacedData.containerH / 2,
-              left: TIMELINE_PAD_X, right: TIMELINE_PAD_X,
-              height: 1, background: 'rgba(255,255,255,0.18)',
-              pointerEvents: 'none',
-            }} />
-            {/* Tick marks at each bucket */}
-            {timelinePlacedData.ticks.map(({ label, tx }) => (
-              <div key={`tick-${label}`} style={{
-                position: 'absolute',
-                left: tx, top: timelinePlacedData.containerH / 2 - 5,
-                width: 1, height: 10,
-                background: 'rgba(255,255,255,0.35)',
-                transform: 'translateX(-50%)',
-                pointerEvents: 'none',
-              }} />
-            ))}
-            {/* Year labels — just below the centre line */}
-            {timelinePlacedData.ticks.filter(t => t.showLabel).map(({ label, tx }) => (
-              <span key={`lbl-${label}`} style={{
-                position: 'absolute', left: tx,
-                top: timelinePlacedData.containerH / 2 + 10,
-                transform: 'translateX(-50%)',
-                fontFamily: 'var(--font-body)', fontSize: 10,
-                letterSpacing: '0.06em', color: 'var(--text-dim)',
-                pointerEvents: 'none', userSelect: 'none', whiteSpace: 'nowrap',
-                zIndex: 2,
-              }}>
-                {label}
-              </span>
-            ))}
-          </>
-        )}
+
 
         {/* Spoke-mode labels */}
-        {mode !== 'colour' && mode !== 'period' && spokeLabelsData.map(({ key, count, lx, ly }) => {
+        {mode !== 'colour' && spokeLabelsData.map(({ key, count, lx, ly }) => {
           const suspect = isSuspectKey(mode, key)
           return (
             <span key={key} style={{
