@@ -460,57 +460,6 @@ export default function Home() {
     <>
       <main style={{ minHeight: '100vh', background: 'var(--bg)', paddingBottom: 44 }}>
 
-        {/* ── Email verification banner ── */}
-        {showVerifyBanner && (
-          <div style={{
-            position: 'sticky', top: 62, zIndex: 39,
-            background: 'rgba(18,14,8,0.97)',
-            borderBottom: '1px solid rgba(201,169,110,0.25)',
-            padding: '9px 40px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-            backdropFilter: 'blur(8px)',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <rect x="1" y="3" width="12" height="8" rx="1.5" stroke="rgba(201,169,110,0.7)" strokeWidth="1.1"/>
-                <path d="M1 4.5l6 4 6-4" stroke="rgba(201,169,110,0.7)" strokeWidth="1.1" strokeLinecap="round"/>
-              </svg>
-              <span style={{
-                fontFamily: 'var(--font-body)', fontSize: 12,
-                color: 'rgba(201,169,110,0.8)', letterSpacing: '0.03em',
-              }}>
-                Please verify your email address to unlock all features.
-              </span>
-              <button
-                onClick={resendVerification}
-                disabled={resendState !== 'idle'}
-                style={{
-                  background: 'none', border: 'none', cursor: resendState === 'idle' ? 'pointer' : 'default',
-                  fontFamily: 'var(--font-body)', fontSize: 12,
-                  color: resendState === 'sent' ? 'var(--accent)' : 'var(--accent-dim)',
-                  letterSpacing: '0.06em', padding: 0,
-                  textDecoration: resendState === 'idle' ? 'underline' : 'none',
-                  transition: 'color 0.15s',
-                }}
-              >
-                {resendState === 'sending' ? 'Sending…' : resendState === 'sent' ? '✓ Link sent' : 'Resend link'}
-              </button>
-            </div>
-            <button
-              onClick={() => setVerifyBannerDismissed(true)}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: 'var(--muted)', padding: '2px 4px',
-                fontFamily: 'var(--font-body)', fontSize: 16, lineHeight: 1,
-                flexShrink: 0,
-              }}
-              aria-label="Dismiss"
-            >
-              ×
-            </button>
-          </div>
-        )}
-
         {/* ── Header ── */}
         <header style={{
           borderBottom: '1px solid var(--border)',
@@ -758,6 +707,57 @@ export default function Home() {
             )}
           </div>
         </header>
+
+        {/* ── Email verification banner ── */}
+        {showVerifyBanner && (
+          <div style={{
+            position: 'sticky', top: 62, zIndex: 39,
+            background: 'rgba(18,14,8,0.97)',
+            borderBottom: '1px solid rgba(201,169,110,0.25)',
+            padding: '9px 40px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            backdropFilter: 'blur(8px)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="3" width="12" height="8" rx="1.5" stroke="rgba(201,169,110,0.7)" strokeWidth="1.1"/>
+                <path d="M1 4.5l6 4 6-4" stroke="rgba(201,169,110,0.7)" strokeWidth="1.1" strokeLinecap="round"/>
+              </svg>
+              <span style={{
+                fontFamily: 'var(--font-body)', fontSize: 12,
+                color: 'rgba(201,169,110,0.8)', letterSpacing: '0.03em',
+              }}>
+                Please verify your email address to unlock all features.
+              </span>
+              <button
+                onClick={resendVerification}
+                disabled={resendState !== 'idle'}
+                style={{
+                  background: 'none', border: 'none', cursor: resendState === 'idle' ? 'pointer' : 'default',
+                  fontFamily: 'var(--font-body)', fontSize: 12,
+                  color: resendState === 'sent' ? 'var(--accent)' : 'var(--accent-dim)',
+                  letterSpacing: '0.06em', padding: 0,
+                  textDecoration: resendState === 'idle' ? 'underline' : 'none',
+                  transition: 'color 0.15s',
+                }}
+              >
+                {resendState === 'sending' ? 'Sending…' : resendState === 'sent' ? '✓ Link sent' : 'Resend link'}
+              </button>
+            </div>
+            <button
+              onClick={() => setVerifyBannerDismissed(true)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--muted)', padding: '2px 4px',
+                fontFamily: 'var(--font-body)', fontSize: 16, lineHeight: 1,
+                flexShrink: 0,
+              }}
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         {/* ── Section tabs ── */}
         <div style={{
