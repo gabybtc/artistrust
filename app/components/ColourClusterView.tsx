@@ -660,11 +660,11 @@ export default function ColourClusterView({ artworks, onSelect, onUpdate }: Prop
           transition: 'border-radius 0.3s',
         }}
       >
-        {/* Axis lines — hidden in period mode which draws its own timeline */}
-        {mode !== 'period' && <>
+        {/* Axis lines */}
+        <>
           <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1, background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
           <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.04)', pointerEvents: 'none' }} />
-        </>}
+        </>
 
         {/* Colour-mode extras */}
         {mode === 'colour' && (
