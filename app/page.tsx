@@ -63,6 +63,8 @@ export default function Home() {
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set())
   const [viewMode, setViewMode] = useState<'grid' | 'cluster'>('grid')
   const [profileFullName, setProfileFullName] = useState<string | undefined>(undefined)
+  const [verifyBannerDismissed, setVerifyBannerDismissed] = useState(false)
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle')
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const router = useRouter()
@@ -159,6 +161,13 @@ export default function Home() {
       upsertArtworks(artworks, user.id)
     }, 1500)
   }, [artworks, user, mounted])
+
+  const resendVerification = useCallback(async () => {
+    if (!user?.email || resendState !== 'idle') return
+    setResendState('sending')
+    await supabase.auth.resend({ type: 'signup', email: user.email })
+    setResendState('sent')
+  }, [user, resendState])
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -418,9 +427,62 @@ export default function Home() {
     allTags:   [...new Set(artworks.flatMap(a => a.tags ?? []))].sort(),
   }
 
+  const showVerifyBanner = !!user && !user.email_confirmed_at && !verifyBannerDismissed
+
   return (
     <>
       <main style={{ minHeight: '100vh', background: 'var(--bg)', paddingBottom: 44 }}>
+
+        {/* ── Email verification banner ── */}
+        {showVerifyBanner && (
+          <div style={{
+            position: 'sticky', top: 62, zIndex: 39,
+            background: 'rgba(18,14,8,0.97)',
+            borderBottom: '1px solid rgba(201,169,110,0.25)',
+            padding: '9px 40px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            backdropFilter: 'blur(8px)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="3" width="12" height="8" rx="1.5" stroke="rgba(201,169,110,0.7)" strokeWidth="1.1"/>
+                <path d="M1 4.5l6 4 6-4" stroke="rgba(201,169,110,0.7)" strokeWidth="1.1" strokeLinecap="round"/>
+              </svg>
+              <span style={{
+                fontFamily: 'var(--font-body)', fontSize: 12,
+                color: 'rgba(201,169,110,0.8)', letterSpacing: '0.03em',
+              }}>
+                Please verify your email address to unlock all features.
+              </span>
+              <button
+                onClick={resendVerification}
+                disabled={resendState !== 'idle'}
+                style={{
+                  background: 'none', border: 'none', cursor: resendState === 'idle' ? 'pointer' : 'default',
+                  fontFamily: 'var(--font-body)', fontSize: 12,
+                  color: resendState === 'sent' ? 'var(--accent)' : 'var(--accent-dim)',
+                  letterSpacing: '0.06em', padding: 0,
+                  textDecoration: resendState === 'idle' ? 'underline' : 'none',
+                  transition: 'color 0.15s',
+                }}
+              >
+                {resendState === 'sending' ? 'Sending…' : resendState === 'sent' ? '✓ Link sent' : 'Resend link'}
+              </button>
+            </div>
+            <button
+              onClick={() => setVerifyBannerDismissed(true)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--muted)', padding: '2px 4px',
+                fontFamily: 'var(--font-body)', fontSize: 16, lineHeight: 1,
+                flexShrink: 0,
+              }}
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         {/* ── Header ── */}
         <header style={{
@@ -434,7 +496,7 @@ export default function Home() {
           zIndex: 40,
         }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, cursor: 'default' }}>
-            <h1 style={{
+            <h1 className="glow-accent" style={{
               fontFamily: 'var(--font-display)',
               fontSize: 22, fontWeight: 400, fontStyle: 'italic',
               letterSpacing: '0.01em', color: 'var(--text)',
@@ -459,7 +521,7 @@ export default function Home() {
                 { label: 'Stories',    value: stats.withStory },
               ].map(s => (
                 <div key={s.label} style={{ textAlign: 'right' }}>
-                  <div style={{
+                  <div className="glow-stat" style={{
                     fontFamily: 'var(--font-display)',
                     fontSize: 22, color: 'var(--accent)', fontWeight: 400,
                   }}>
@@ -1311,6 +1373,10 @@ export default function Home() {
         <div className={`toast${toast ? ' show' : ''}`}>
           ✓&nbsp;&nbsp;{toast}
         </div>
+
+        <footer style={{ textAlign: 'center', padding: '16px 0 8px', fontSize: 12, color: 'var(--muted, #888)' }}>
+          &copy; 2026 Wibbly Works Inc. All rights reserved.
+        </footer>
 
       </main>
 

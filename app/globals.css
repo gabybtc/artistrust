@@ -8,8 +8,9 @@
   --accent: #c9a96e;
   --accent-dim: #8a6f3e;
   --muted: #555;
-  --text: #e8e8e8;
-  --text-dim: #888;
+  --text: #A8A6A1;
+  --text-dim: #726f6b;
+  --accent-glow: 0 0 18px rgba(201,169,110,0.42), 0 0 38px rgba(201,169,110,0.18);
 }
 
 html, body {
@@ -45,6 +46,14 @@ html, body {
   border-color: var(--accent-dim);
   color: var(--accent);
   background: rgba(201,169,110,0.06);
+}
+
+/* Glow utilities — applied to key accent & display elements */
+.glow-accent {
+  text-shadow: var(--accent-glow);
+}
+.glow-stat {
+  text-shadow: 0 0 14px rgba(201,169,110,0.55), 0 0 30px rgba(201,169,110,0.24);
 }
 
 /* Gold divider */
@@ -92,3 +101,34 @@ html, body {
   z-index: 100;
 }
 .toast.show { opacity: 1; transform: translateY(0); }
+
+/* ── Desktop typography scaling ───────────────────────────────────────────── */
+@media (min-width: 1024px) {
+  html, body {
+    font-size: 15.5px;
+  }
+
+  /* Logo wordmark */
+  .glow-accent {
+    font-size: 26px !important;
+  }
+
+  /* Header stat numbers */
+  .glow-stat {
+    font-size: 27px !important;
+  }
+}
+
+@media (min-width: 1440px) {
+  html, body {
+    font-size: 16px;
+  }
+
+  .glow-accent {
+    font-size: 28px !important;
+  }
+
+  .glow-stat {
+    font-size: 30px !important;
+  }
+}

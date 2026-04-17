@@ -486,6 +486,37 @@ export default function ColourClusterView({ artworks, onSelect, onUpdate }: Prop
     mode === 'period' ? timelineLayout(artworks) : { placed: [], noDate: [], ticks: [], containerH: 0 }
   , [artworks, mode])
 
+  const periodGroups = useMemo(() => {
+    if (mode !== 'period') return null
+    const withYear: Array<{ artwork: Artwork; year: number }> = []
+    const noDateItems: Artwork[] = []
+    for (const a of artworks) {
+      const y = parseInt(a.year ?? '', 10)
+      if (isNaN(y) || y < 1400 || y > 2100) { noDateItems.push(a); continue }
+      withYear.push({ artwork: a, year: y })
+    }
+    if (withYear.length === 0) return { groups: [], noDate: noDateItems }
+    const years = withYear.map(w => w.year)
+    const rawMin = Math.min(...years), rawMax = Math.max(...years)
+    const range = rawMax - rawMin
+    const bucketSize = range > 80 ? 10 : range > 30 ? 5 : 1
+    const map = new Map<number, Artwork[]>()
+    for (const { artwork, year } of withYear) {
+      const bucket = Math.floor(year / bucketSize) * bucketSize
+      if (!map.has(bucket)) map.set(bucket, [])
+      map.get(bucket)!.push(artwork)
+    }
+    const sorted = [...map.entries()].sort(([a], [b]) => a - b)
+    return {
+      groups: sorted.map(([yr, members]) => ({
+        yr,
+        label: bucketSize === 1 ? String(yr) : `${yr}s`,
+        members,
+      })),
+      noDate: noDateItems,
+    }
+  }, [artworks, mode])
+
   const allPlaced = mode === 'colour' ? colourPlaced
     : mode === 'period' ? timelinePlacedData.placed.map(({ artwork, bx, dy }) => ({
         artwork, bx,
@@ -510,6 +541,7 @@ export default function ColourClusterView({ artworks, onSelect, onUpdate }: Prop
 
   const hoveredArtwork = allPlaced.find(p => p.artwork.id === nearestId)?.artwork
     ?? (mode === 'colour' ? [...colourAchromatic, ...colourNoPalette].find(a => a.id === hoveredId) : undefined)
+    ?? (mode === 'period' ? artworks.find(a => a.id === hoveredId) : undefined)
 
   const subtitles: Record<ClusterMode, string> = {
     colour:  'Works arranged by their dominant colour',
@@ -610,7 +642,8 @@ export default function ColourClusterView({ artworks, onSelect, onUpdate }: Prop
         )}
       </div>
 
-      {/* Wheel */}
+      {/* Wheel — colour and region modes only */}
+      {mode !== 'period' && (
       <div
         ref={wheelRef}
         onMouseMove={handleMouseMove}
@@ -784,53 +817,115 @@ export default function ColourClusterView({ artworks, onSelect, onUpdate }: Prop
           )
         })}
       </div>
+      )}
 
-      {/* No-date strip — period mode only */}
-      {mode === 'period' && timelinePlacedData.noDate.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <p style={{
-            fontFamily: 'var(--font-body)', fontSize: 11,
-            letterSpacing: '0.12em', textTransform: 'uppercase',
-            color: 'var(--muted)', textAlign: 'center', marginBottom: 10,
-          }}>
-            No date recorded
-          </p>
-          <div style={{
-            display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center',
-            maxWidth: BOARD,
-          }}>
-            {timelinePlacedData.noDate.map(artwork => {
-              const isHovered = hoveredId === artwork.id
-              return (
-                <button
-                  key={artwork.id}
-                  title={artwork.title || 'Untitled'}
-                  onClick={() => onSelect(artwork)}
-                  onMouseEnter={() => setHoveredId(artwork.id)}
-                  onMouseLeave={() => setHoveredId(null)}
-                  style={{
-                    width: THUMB, height: THUMB,
-                    padding: 0, border: 'none',
-                    borderRadius: 2, overflow: 'hidden', cursor: 'pointer',
-                    outline: isHovered ? '2px solid var(--accent)' : '1px solid rgba(255,255,255,0.1)',
-                    outlineOffset: isHovered ? 2 : 0,
-                    transform: isHovered ? 'scale(1.1)' : 'scale(1)',
-                    transition: 'transform 0.18s, outline 0.18s',
-                    background: 'var(--card)',
-                  }}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={artwork.imageData}
-                    alt={artwork.title || 'Artwork'}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                  />
-                </button>
-              )
-            })}
-          </div>
+      {/* Period mode — year rows */}
+      {mode === 'period' && periodGroups && (
+        <div style={{ width: '100%', alignSelf: 'stretch' }}>
+          {periodGroups.groups.map(({ yr, label, members }, i) => (
+            <div key={yr}>
+              {i > 0 && (
+                <div style={{ height: 1, background: 'rgba(255,255,255,0.07)' }} />
+              )}
+              <div style={{
+                display: 'flex', alignItems: 'flex-start', gap: 16, padding: '14px 0',
+              }}>
+                <div style={{ width: 80, flexShrink: 0, paddingTop: 2 }}>
+                  <span style={{
+                    fontFamily: 'var(--font-display)', fontStyle: 'italic',
+                    fontSize: 34, fontWeight: 400, lineHeight: 1,
+                    color: 'rgba(236, 228, 214, 0.92)',
+                    letterSpacing: '-0.01em',
+                  }}>
+                    {label}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: 1 }}>
+                  {members.map(artwork => {
+                    const isHov = hoveredId === artwork.id
+                    return (
+                      <button
+                        key={artwork.id}
+                        title={artwork.title || 'Untitled'}
+                        onClick={() => onSelect(artwork)}
+                        onMouseEnter={() => setHoveredId(artwork.id)}
+                        onMouseLeave={() => setHoveredId(null)}
+                        style={{
+                          width: THUMB, height: THUMB,
+                          padding: 0, border: 'none',
+                          borderRadius: 2, overflow: 'hidden', cursor: 'pointer',
+                          outline: isHov ? '2px solid var(--accent)' : '1px solid rgba(255,255,255,0.1)',
+                          outlineOffset: isHov ? 2 : 0,
+                          transform: isHov ? 'scale(1.08)' : 'scale(1)',
+                          transition: 'transform 0.18s, outline 0.18s',
+                          background: 'var(--card)',
+                        }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={artwork.imageData}
+                          alt={artwork.title || 'Artwork'}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                        />
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          ))}
+          {periodGroups.noDate.length > 0 && (
+            <div>
+              <div style={{ height: 1, background: 'rgba(255,255,255,0.07)' }} />
+              <div style={{
+                display: 'flex', alignItems: 'flex-start', gap: 16, padding: '14px 0',
+              }}>
+                <div style={{ width: 80, flexShrink: 0, paddingTop: 6 }}>
+                  <span style={{
+                    fontFamily: 'var(--font-body)', fontSize: 11,
+                    letterSpacing: '0.1em', textTransform: 'uppercase',
+                    color: 'var(--muted)',
+                  }}>
+                    No date
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: 1 }}>
+                  {periodGroups.noDate.map(artwork => {
+                    const isHov = hoveredId === artwork.id
+                    return (
+                      <button
+                        key={artwork.id}
+                        title={artwork.title || 'Untitled'}
+                        onClick={() => onSelect(artwork)}
+                        onMouseEnter={() => setHoveredId(artwork.id)}
+                        onMouseLeave={() => setHoveredId(null)}
+                        style={{
+                          width: THUMB, height: THUMB,
+                          padding: 0, border: 'none',
+                          borderRadius: 2, overflow: 'hidden', cursor: 'pointer',
+                          outline: isHov ? '2px solid var(--accent)' : '1px solid rgba(255,255,255,0.1)',
+                          outlineOffset: isHov ? 2 : 0,
+                          transform: isHov ? 'scale(1.08)' : 'scale(1)',
+                          transition: 'transform 0.18s, outline 0.18s',
+                          background: 'var(--card)',
+                        }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={artwork.imageData}
+                          alt={artwork.title || 'Artwork'}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                        />
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
+
 
       {/* Achromatic strip — colour mode only, only truly greyscale works */}
       {mode === 'colour' && colourAchromatic.length > 0 && (

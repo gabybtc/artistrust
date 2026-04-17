@@ -23,6 +23,7 @@ export default function AuthModal({ onAuth, standalone, defaultView, planIntent,
   const [error, setError] = useState<string | null>(null)
   const [magicSent, setMagicSent] = useState(false)
   const [resetSent, setResetSent] = useState(false)
+  const [infoMsg, setInfoMsg] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [planInterval, setPlanInterval] = useState<BillingInterval>(intervalIntent ?? 'monthly')
   const [checkoutLoading, setCheckoutLoading] = useState(false)
@@ -128,7 +129,7 @@ export default function AuthModal({ onAuth, standalone, defaultView, planIntent,
         // After signup, try to sign in immediately
         const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password })
         if (signInErr) {
-          setError('Account created — check your email to confirm, then sign in.')
+          setInfoMsg('Account created — check your email to confirm, then sign in.')
         } else if (planIntent) {
           if (intervalIntent) {
             await triggerCheckout(planIntent, intervalIntent)
@@ -186,7 +187,7 @@ export default function AuthModal({ onAuth, standalone, defaultView, planIntent,
           {(['signin', 'signup', 'magic'] as Mode[]).map(m => (
             <button
               key={m}
-              onClick={() => { setMode(m); setError(null); setMagicSent(false); setResetSent(false) }}
+              onClick={() => { setMode(m); setError(null); setMagicSent(false); setResetSent(false); setInfoMsg(null) }}
               style={{
                 flex: 1,
                 background: mode === m ? 'var(--surface)' : 'transparent',
@@ -416,6 +417,21 @@ export default function AuthModal({ onAuth, standalone, defaultView, planIntent,
               }}>
                 {error}
               </p>
+            )}
+
+            {infoMsg && (
+              <div style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+                fontSize: 13, color: 'var(--text-dim)',
+                fontFamily: 'var(--font-body)',
+                background: 'rgba(201,169,110,0.07)',
+                border: '1px solid var(--accent-dim)',
+                borderRadius: 2, padding: '10px 12px',
+                lineHeight: 1.5,
+              }}>
+                <span style={{ color: 'var(--accent)', fontSize: 15, flexShrink: 0, marginTop: 1 }}>✓</span>
+                {infoMsg}
+              </div>
             )}
 
             {mode === 'signin' && (

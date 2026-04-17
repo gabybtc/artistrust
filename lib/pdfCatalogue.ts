@@ -92,19 +92,21 @@ export async function generatePdfCatalogue(
     const copyright = a.copyrightStatus === 'registered'
       ? `© ${a.copyrightYear} ${a.copyrightHolder} (Reg. ${a.copyrightRegNumber || 'N/A'})`
       : `© ${a.copyrightYear || ''} ${a.copyrightHolder || ''}`
+    const edition = a.editions ? `Ed. ${a.editions}` : '—'
     return [
       '',   // thumbnail slot — filled via didDrawCell
       a.title || a.aiAnalysis?.suggestedTitle || 'Untitled',
       a.year || '—',
       medium,
       dims,
+      edition,
       copyright,
     ]
   })
 
   autoTable(doc, {
     startY: separatorY + 4,
-    head: [['', 'Title', 'Year', 'Medium', 'Dimensions', 'Copyright']],
+    head: [['', 'Title', 'Year', 'Medium', 'Dimensions', 'Edition', 'Copyright']],
     body: rows,
     theme: 'plain',
     headStyles: {
@@ -127,11 +129,12 @@ export async function generatePdfCatalogue(
     },
     columnStyles: {
       0: { cellWidth: 22 },   // thumbnail  (22)
-      1: { cellWidth: 40 },   // title      (40)
+      1: { cellWidth: 38 },   // title      (38)
       2: { cellWidth: 12 },   // year       (12)
-      3: { cellWidth: 28 },   // medium     (28)
+      3: { cellWidth: 26 },   // medium     (26)
       4: { cellWidth: 22 },   // dimensions (22)
-      5: { cellWidth: 46 },   // copyright  (46)
+      5: { cellWidth: 12 },   // edition    (12)
+      6: { cellWidth: 38 },   // copyright  (38)
     },                        // total = 170 = 210 − 20 − 20
     margin: { left: 20, right: 20 },
     tableLineColor: [210, 202, 188],
