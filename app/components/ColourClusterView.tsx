@@ -651,10 +651,10 @@ export default function ColourClusterView({ artworks, onSelect, onUpdate }: Prop
         style={{
           position: 'relative',
           width: BOARD,
-          height: mode === 'period' ? timelinePlacedData.containerH : BOARD,
+          height: BOARD,
           borderRadius: mode === 'colour' ? '50%' : 12,
-          border: mode === 'period' ? 'none' : '1px solid var(--border)',
-          background: mode === 'period' ? 'transparent' : 'radial-gradient(circle at 50% 50%, rgba(255,255,255,0.025) 0%, transparent 70%)',
+          border: '1px solid var(--border)',
+          background: 'radial-gradient(circle at 50% 50%, rgba(255,255,255,0.025) 0%, transparent 70%)',
           flexShrink: 0,
           cursor: 'crosshair',
           transition: 'border-radius 0.3s',
